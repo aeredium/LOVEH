@@ -1,0 +1,26 @@
+[
+  {
+    "type": "function",
+    "name": "ratePerSecond",
+    "inputs": [
+      {
+        "name": "loans",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "deposits",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  }
+]
