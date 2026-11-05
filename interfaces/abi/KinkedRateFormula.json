@@ -1,0 +1,119 @@
+[
+  {
+    "type": "constructor",
+    "inputs": [
+      {
+        "name": "baseRate_",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "slopeBelow_",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "slopeAbove_",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "targetUtilisation_",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "baseRate",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "ratePerSecond",
+    "inputs": [
+      {
+        "name": "loans",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "deposits",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "slopeAbove",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "slopeBelow",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "targetUtilisation",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "error",
+    "name": "InvalidTarget",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SlopeAboveNotSteeper",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroSlope",
+    "inputs": []
+  }
+]

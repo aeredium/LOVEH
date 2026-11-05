@@ -1,0 +1,9 @@
+# Foundry build outputs
+out/
+cache/
+
+# Builder's working notes and run logs (never committed)
+.builder/
+
+# The brief is never committed
+SPEC.md
