@@ -81,6 +81,30 @@
   },
   {
     "type": "function",
+    "name": "borrowableOf",
+    "inputs": [
+      {
+        "name": "borrower",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "priceAvailable",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "borrowerAt",
     "inputs": [
       {

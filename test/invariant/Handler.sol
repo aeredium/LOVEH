@@ -130,29 +130,28 @@ contract Handler is Test {
 
     function borrow(uint256 seed, uint256 fraction) external countCall {
         address a = _actor(seed);
-        (bool ok, uint256 maxLoan) = market.maxLoanOf(a);
+        (bool ok, uint256 cap) = market.borrowableOf(a);
         if (!ok) {
+            require(cap == 0, "borrowable with no price must be zero");
             vm.prank(a);
             try market.borrow(1, a) {
                 revert("borrow with no price must fail");
             } catch {}
             return;
         }
-        // Prefer an actor with room to borrow, so borrowing actually happens often.
-        uint256 room;
+        // Prefer an actor with room to borrow, so borrowing actually happens often. The room is what
+        // `borrow` will accept at this block: within the limit after both roundings, and within the
+        // unlent balance.
         for (uint256 i = 0; i < actors.length; ++i) {
             address candidate = actors[(seed % actors.length + i) % actors.length];
-            (, uint256 candidateMax) = market.maxLoanOf(candidate);
-            uint256 candidateOwed = market.loanOf(candidate);
-            if (candidateMax > candidateOwed) {
+            (, uint256 candidateRoom) = market.borrowableOf(candidate);
+            if (candidateRoom != 0) {
                 a = candidate;
-                maxLoan = candidateMax;
-                room = candidateMax - candidateOwed;
+                cap = candidateRoom;
                 break;
             }
         }
-        uint256 unlent = market.unlent();
-        uint256 cap = room < unlent ? room : unlent;
+        require(cap <= market.unlent(), "borrowable above the unlent balance");
         // Mostly within reach, sometimes deliberately above the limit to prove the refusal.
         uint256 amount = fraction % 10 == 0 ? bound(fraction, cap + 1, cap + 1e24) : bound(fraction, 0, cap);
         if (amount == 0) return;

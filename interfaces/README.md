@@ -68,10 +68,21 @@ market.depositCollateral(1e18, msg.sender);
 (bool priceAvailable, uint256 maxLoan) = market.maxLoanOf(msg.sender);
 require(priceAvailable);
 market.borrow(maxLoan / 2, msg.sender);                    // loan token sent to the receiver
+// later, to borrow everything the market will still lend to this borrower
+(bool ok, uint256 borrowable) = market.borrowableOf(msg.sender);
+require(ok && borrowable != 0);
+market.borrow(borrowable, msg.sender);                     // accepted; borrowable + 1 would be refused
 ```
 
 Borrowing is refused above the borrowing limit, above the unlent loan token, or when the price is
 zero or unavailable. Interest accrues every second at `IRateFormula(market.rateFormula()).ratePerSecond(loans, deposits)`.
+
+`maxLoanOf` is the limit itself; `borrowableOf` is the largest amount `borrow` accepts at this
+block: the limit less the loan (with the interest pending up to now), less what the market's
+roundings take, and never more than the unlent loan token. Because the market rounds the loan units
+up on the way in and the loan up on the way out, `maxLoanOf - loanOf` can be refused by a unit;
+`borrowableOf` is never refused. Read in the same block as the borrow, it is exact; a block later the
+interest accrued since may put it a unit high.
 
 ### Repaying
 

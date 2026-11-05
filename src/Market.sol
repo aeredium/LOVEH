@@ -350,6 +350,50 @@ contract Market is IMarket, ReentrancyGuard {
     }
 
     /// @inheritdoc IMarket
+    function borrowableOf(address borrower) external view returns (bool priceAvailable, uint256 amount) {
+        uint256 price;
+        (priceAvailable, price) = _price();
+        if (!priceAvailable) return (false, 0);
+        (uint256 interest,) = _pendingAccrual();
+        uint256 totalLoans = _loans + interest;
+        uint256 totalUnits = totalLoanUnits;
+        uint256 units = loanUnitsOf[borrower];
+        uint256 maxLoan = _maxLoan(collateralOf[borrower], price);
+
+        // Borrowing `a` raises the loan charged by at least `a` (units are rounded up on the way in and
+        // the loan on the way out), so nothing above the limit less the loan, nor above the unlent
+        // balance, is ever accepted. That bound is usually the answer; the two roundings may push the
+        // loan charged for it over the limit by a unit or so.
+        uint256 loan = units == 0 ? 0 : _toLoansUp(units, totalLoans, totalUnits);
+        uint256 high = FixedPoint.min(maxLoan.zeroFloorSub(loan), _unlent);
+        if (high == 0) return (true, 0);
+        if (_loanAfterBorrow(units, high, totalLoans, totalUnits) <= maxLoan) return (true, high);
+
+        // The roundings cost at most the worth of one loan unit, rounded up. With x = T + 1e6 units
+        // and y = L + 1 loans, the units minted for `a` are below a·x/y + 1, and a borrower's share
+        // of the units grows with the units minted, so the loan charged after the borrow is at most
+        // ceil(u·y/x + a + y/x) <= loanOf + a + ceil(y/x). Hence `high - unitPrice` is accepted (or
+        // is zero, which is), and the answer lies in [high - unitPrice, high). The loan charged never
+        // falls as the amount rises, so the largest accepted amount is found by bisection over that
+        // range: no step at all while a unit is worth a token or less, never more than 256, each a
+        // few multiplications. Should the bound ever be off, the search starts from zero instead and
+        // is exact all the same.
+        uint256 unitPrice = _toLoansUp(1, totalLoans, totalUnits);
+        uint256 low = high.zeroFloorSub(unitPrice);
+        if (low != 0 && _loanAfterBorrow(units, low, totalLoans, totalUnits) > maxLoan) low = 0;
+        // invariant: `low` is accepted and `high` is refused
+        while (high - low > 1) {
+            uint256 mid = low + (high - low) / 2;
+            if (_loanAfterBorrow(units, mid, totalLoans, totalUnits) <= maxLoan) {
+                low = mid;
+            } else {
+                high = mid;
+            }
+        }
+        amount = low;
+    }
+
+    /// @inheritdoc IMarket
     function receiptsFor(uint256 amount) external view returns (uint256) {
         (uint256 interest, uint256 fee) = _pendingAccrual();
         return _toReceiptsDown(amount, _deposits + interest - fee, _totalReceipts());
@@ -559,6 +603,17 @@ contract Market is IMarket, ReentrancyGuard {
     function _loanOf(address borrower, uint256 totalLoans, uint256 totalUnits) internal view returns (uint256) {
         uint256 units = loanUnitsOf[borrower];
         return units == 0 ? 0 : _toLoansUp(units, totalLoans, totalUnits);
+    }
+
+    /// @dev The loan `borrow` would charge a borrower holding `units` after borrowing `amount` more:
+    ///      the same two roundings as `borrow`, units up on the way in and the loan up on the way out.
+    function _loanAfterBorrow(uint256 units, uint256 amount, uint256 totalLoans, uint256 totalUnits)
+        internal
+        pure
+        returns (uint256)
+    {
+        uint256 newUnits = _toLoanUnitsUp(amount, totalLoans, totalUnits);
+        return _toLoansUp(units + newUnits, totalLoans + amount, totalUnits + newUnits);
     }
 
     /// @dev The highest loan allowed against `amount` of collateral at `price`: value times the borrowing limit.

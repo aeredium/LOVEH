@@ -140,6 +140,12 @@ interface IMarket {
     /// @notice Highest loan a borrower may hold against their collateral at the current price.
     ///         `priceAvailable` is false when the price source fails or returns zero.
     function maxLoanOf(address borrower) external view returns (bool priceAvailable, uint256 maxLoan);
+    /// @notice The largest amount a call to `borrow` by this borrower would accept at this block:
+    ///         after the interest pending up to now, after the roundings `borrow` applies (both in
+    ///         the market's favour), and never more than the unlent loan token. Exact: `borrow(amount)`
+    ///         succeeds and `borrow(amount + 1)` is refused. `priceAvailable` is false when the price
+    ///         source fails or returns zero, and `amount` is then zero. Bounded gas.
+    function borrowableOf(address borrower) external view returns (bool priceAvailable, uint256 amount);
     /// @notice Loan token the market would mint receipts for right now, for an amount deposited.
     function receiptsFor(uint256 amount) external view returns (uint256);
     /// @notice Loan token the market would pay right now for an amount of receipts.

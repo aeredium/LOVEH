@@ -28,7 +28,7 @@ contract FixedTermsTest is SurfaceTest {
             actions = new string[](1);
             actions[0] = "createMarket";
         } else if (_eq(contractName, "Market")) {
-            views = new string[](32);
+            views = new string[](33);
             // the terms, all immutable
             views[0] = "loanToken";
             views[1] = "collateralToken";
@@ -63,6 +63,7 @@ contract FixedTermsTest is SurfaceTest {
             views[29] = "borrowerCount";
             views[30] = "borrowerAt";
             views[31] = "loansAboveLimit";
+            views[32] = "borrowableOf";
             actions = new string[](9);
             actions[0] = "deposit";
             actions[1] = "withdraw";
