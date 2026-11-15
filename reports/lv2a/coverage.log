@@ -1,0 +1,769 @@
+CUT SHORT BY THE TOOL: forge produced 64606 bytes; the tool returned the first 32768 and the last 16363 and marked the cut below. The narrower forms of forge test/coverage (--match-path, --match-contract) were refused by the doorway (rule 199), so the run could not be repeated in parts; the cut falls inside the repeated per-selector tables of test/invariant/MarketInvariants.t.sol:MarketInvariantsLinearTest, whose suite result, the final summary line and the whole coverage table are shown whole.
+$ forge coverage --offline
+
+Warning: optimizer settings and `viaIR` have been disabled for accurate coverage reports.
+If you encounter "stack too deep" errors, consider using `--ir-minimum` which enables `viaIR` with minimum optimization resolving most of the errors.
+See more: https://book.getfoundry.sh/guides/best-practices/stack-too-deep
+Compiling 66 files with Solc 0.8.28
+Solc 0.8.28 finished in 1.06s
+Compiler run successful!
+Analysing contracts...
+Running tests...
+
+Ran 4 tests for test/FrozenAddress.t.sol:FrozenAddressTest
+[PASS] test_frozenBorrowerCanStillBeLiquidated() (gas: 423091)
+[PASS] test_frozenBorrowerCannotBorrowOrReceive() (gas: 292542)
+[PASS] test_frozenBorrowerCollateralStillLeavesToLiquidatorNotBorrower() (gas: 310034)
+[PASS] test_frozenReceiverCannotReceive() (gas: 241479)
+Suite result: ok. 4 passed; 0 failed; 0 skipped; finished in 3.52ms (1.89ms CPU time)
+
+Ran 4 tests for test/Isolation.t.sol:IsolationTest
+[PASS] test_activityInOneLeavesTheOtherUnchanged() (gas: 776672)
+[PASS] test_activityInTheOtherLeavesThisUnchanged() (gas: 648607)
+[PASS] test_receiptsAreNotInterchangeable() (gas: 46899)
+[PASS] test_sameTermsDifferentLimitsAreDifferentIncentives() (gas: 17398)
+Suite result: ok. 4 passed; 0 failed; 0 skipped; finished in 5.27ms (2.49ms CPU time)
+
+Ran 12 tests for test/DeployScripts.t.sol:DeployScriptsTest
+[PASS] test_deployLoveh1_deploysInOrder() (gas: 15013224)
+[PASS] test_deployLoveh1_formulaRefusesSlopeAboveNotSteeper() (gas: 9035198)
+[PASS] test_deployLoveh1_formulaRefusesTargetAtOne() (gas: 9035097)
+[PASS] test_deployLoveh1_fromTestInputs_wiredAsSaid() (gas: 15014712)
+[PASS] test_deployLoveh1_fromTheEnvironment() (gas: 14729444)
+[PASS] test_deployLoveh1_marketWithKinkedFormula_linearRefused() (gas: 21871132)
+[PASS] test_deployLoveh1_refusesEachMissingInput() (gas: 41974358)
+[PASS] test_deployLoveh1_refusesMalformedInputs() (gas: 8441483)
+[PASS] test_deployTill_fromTestInputs() (gas: 2861120)
+[PASS] test_deployTill_fromTheEnvironment() (gas: 1887649)
+[PASS] test_deployTill_refusesMalformedInput() (gas: 1511391)
+[PASS] test_deployTill_refusesMissingInput() (gas: 1432394)
+Suite result: ok. 12 passed; 0 failed; 0 skipped; finished in 7.33ms (6.62ms CPU time)
+
+Ran 4 tests for test/FoundationTillSurface.t.sol:FoundationTillSurfaceTest
+[PASS] test_everyExternalFunctionIsListed() (gas: 310250)
+[PASS] test_noOwnerAdminPauseUpgradeOrRoleFunction() (gas: 987974)
+[PASS] test_noReceiveNoFallbackNoPayable() (gas: 910624)
+[PASS] test_noSelfdestructOrDelegatecallInBytecode() (gas: 1054115)
+Suite result: ok. 4 passed; 0 failed; 0 skipped; finished in 16.16ms (16.00ms CPU time)
+
+Ran 2 tests for test/NoOwner.t.sol:NoOwnerTest
+[PASS] test_noOwnerAdminPauseUpgradeOrRoleFunction() (gas: 15500662)
+[PASS] test_noSelfdestructOrDelegatecallInBytecode() (gas: 23754234)
+Suite result: ok. 2 passed; 0 failed; 0 skipped; finished in 136.93ms (136.00ms CPU time)
+
+Ran 3 tests for test/FixedTerms.t.sol:FixedTermsTest
+[PASS] test_everyExternalFunctionIsApproved() (gas: 7012316)
+[PASS] test_noFunctionChangesAnyTerm() (gas: 7422634)
+[PASS] test_noPayableFunctions() (gas: 16074096)
+Suite result: ok. 3 passed; 0 failed; 0 skipped; finished in 319.52ms (319.35ms CPU time)
+
+Ran 5 tests for test/ReceiptToken.t.sol:ReceiptTokenTest
+[PASS] testFuzz_transferConservesSupply(uint256) (runs: 10000, μ: 57992, ~: 57776)
+[PASS] test_approveAndTransferFrom() (gas: 75720)
+[PASS] test_infiniteAllowanceIsNotReduced() (gas: 78478)
+[PASS] test_onlyMarketMintsAndBurns() (gas: 32328)
+[PASS] test_transfer() (gas: 118894)
+Suite result: ok. 5 passed; 0 failed; 0 skipped; finished in 451.96ms (451.55ms CPU time)
+
+Ran 2 tests for test/FixedPoint.t.sol:FixedPointTest
+[PASS] testFuzz_upIsDownOrOneMore(uint256,uint256,uint256) (runs: 10000, μ: 21773, ~: 20931)
+[PASS] test_values() (gas: 32347)
+Suite result: ok. 2 passed; 0 failed; 0 skipped; finished in 571.39ms (571.25ms CPU time)
+
+Ran 7 tests for test/RateFormulas.t.sol:RateFormulasTest
+[PASS] testFuzz_bounded(uint256,uint256) (runs: 10000, μ: 27637, ~: 27408)
+[PASS] testFuzz_kinkIsSteeperAbove(uint256,uint256) (runs: 10000, μ: 29924, ~: 29860)
+[PASS] testFuzz_monotone(uint256,uint256,uint256) (runs: 10000, μ: 34486, ~: 34671)
+[PASS] testFuzz_strictlyIncreasingAcrossOnePercent(uint256) (runs: 10000, μ: 31419, ~: 31353)
+[PASS] test_constructors_reject() (gas: 211103)
+[PASS] test_kinked_parametersAndShape() (gas: 41980)
+[PASS] test_linear_parametersAndShape() (gas: 31563)
+Suite result: ok. 7 passed; 0 failed; 0 skipped; finished in 2.24s (2.95s CPU time)
+
+Ran 11 tests for test/Liquidation.t.sol:LiquidationTest
+[PASS] testFuzz_liquidation(uint256,uint256,uint256) (runs: 10000, μ: 472295, ~: 472837)
+[PASS] test_allowedAboveLimit_collateralEqualsRepayTimesIncentiveAtPrice() (gas: 501821)
+[PASS] test_anyoneCanLiquidate_nobodyCanStopIt() (gas: 604158)
+[PASS] test_interestAccruedMakesLoanLiquidatable() (gas: 538317)
+[PASS] test_lossBeyondDepositsReducesUnpaidFeeOnly() (gas: 4926656)
+[PASS] test_lossNeverTouchesAnotherMarket() (gas: 5188979)
+[PASS] test_lossWrittenOffWhenCollateralRunsOut() (gas: 474992)
+[PASS] test_priceZeroOrFailingNeverPermitsLiquidation() (gas: 461843)
+[PASS] test_refusedWithinLimit() (gas: 479588)
+[PASS] test_refusedWithoutLoanOrWithBadArguments() (gas: 118300)
+[PASS] test_repayCappedToWholeLoan() (gas: 430020)
+Suite result: ok. 11 passed; 0 failed; 0 skipped; finished in 3.44s (3.44s CPU time)
+
+Ran 7 tests for test/Fee.t.sol:FeeTest
+[PASS] testFuzz_feePaidPlusOwedIsTenPercent(uint256,uint256,uint256) (runs: 10000, μ: 337445, ~: 337577)
+[PASS] test_feeOwedIsTenPercentOfInterest() (gas: 46679)
+[PASS] test_feeRecipientCannotBeRedirected() (gas: 17723)
+[PASS] test_payFee_byAnyone_onlyToRecipient_onlyInLoanToken() (gas: 192153)
+[PASS] test_payFee_limitedToUnlent() (gas: 472533)
+[PASS] test_withdrawPaysFeePartlyWhenUnlentShort() (gas: 240479)
+[PASS] test_withdrawPaysFeeWhenUnlentAllows() (gas: 221520)
+Suite result: ok. 7 passed; 0 failed; 0 skipped; finished in 4.08s (4.08s CPU time)
+
+Ran 5 tests for test/FeeOnTransfer.t.sol:FeeOnTransferTest
+[PASS] testFuzz_depositMintsOnlyForAmountReceived(uint256) (runs: 10000, μ: 226436, ~: 225763)
+[PASS] test_collateralCreditedOnlyForAmountReceived() (gas: 174748)
+[PASS] test_depositMintsOnlyForAmountReceived() (gas: 241439)
+[PASS] test_liquidationCreditedOnlyForAmountReceived() (gas: 666612)
+[PASS] test_repaymentCreditedOnlyForAmountReceived() (gas: 609943)
+Suite result: ok. 5 passed; 0 failed; 0 skipped; finished in 9.48s (9.48s CPU time)
+
+Ran 11 tests for test/Borrowable.t.sol:BorrowableLinearTest
+[PASS] testFuzz_exact(uint256,uint256,uint256,uint256,uint256,uint256,uint256) (runs: 10000, μ: 976712, ~: 933793)
+[PASS] test_cappedByTheUnlentBalance() (gas: 808637)
+[PASS] test_exact_afterTimeWithAnotherLoanOpen() (gas: 968293)
+[PASS] test_exact_whenOneLoanUnitIsWorthMoreThanOneToken() (gas: 1439172)
+[PASS] test_exact_whenTheBorrowerAlreadyHasALoan() (gas: 851183)
+[PASS] test_gasIsBounded() (gas: 784439)
+[PASS] test_loanAtTheLimit_returnsZero() (gas: 626515)
+[PASS] test_maxLoanMinusLoanIsRefused_borrowableIsAccepted() (gas: 965509)
+[PASS] test_noCollateral_returnsZero() (gas: 371131)
+[PASS] test_priceOutage_returnsFalseAndZero() (gas: 673240)
+[PASS] test_sameAnswerWhetherOrNotInterestIsWritten() (gas: 705982)
+Suite result: ok. 11 passed; 0 failed; 0 skipped; finished in 11.10s (11.10s CPU time)
+
+Ran 11 tests for test/Borrowable.t.sol:BorrowableKinkedTest
+[PASS] testFuzz_exact(uint256,uint256,uint256,uint256,uint256,uint256,uint256) (runs: 10000, μ: 977727, ~: 933416)
+[PASS] test_cappedByTheUnlentBalance() (gas: 808805)
+[PASS] test_exact_afterTimeWithAnotherLoanOpen() (gas: 968461)
+[PASS] test_exact_whenOneLoanUnitIsWorthMoreThanOneToken() (gas: 1582434)
+[PASS] test_exact_whenTheBorrowerAlreadyHasALoan() (gas: 851407)
+[PASS] test_gasIsBounded() (gas: 784607)
+[PASS] test_loanAtTheLimit_returnsZero() (gas: 626627)
+[PASS] test_maxLoanMinusLoanIsRefused_borrowableIsAccepted() (gas: 965733)
+[PASS] test_noCollateral_returnsZero() (gas: 371131)
+[PASS] test_priceOutage_returnsFalseAndZero() (gas: 673352)
+[PASS] test_sameAnswerWhetherOrNotInterestIsWritten() (gas: 706150)
+Suite result: ok. 11 passed; 0 failed; 0 skipped; finished in 15.10s (15.12s CPU time)
+
+Ran 6 tests for test/Factory.t.sol:FactoryTest
+[PASS] testFuzz_createMarket_limitBounds(uint256) (runs: 10000, μ: 2042851, ~: 19469)
+[PASS] test_construction() (gas: 82354)
+[PASS] test_constructor_rejects() (gas: 305723)
+[PASS] test_createMarket_byAnyone_emitsAndLists() (gas: 4407886)
+[PASS] test_createMarket_rejects() (gas: 309022)
+[PASS] test_sameTokensDifferentTermsAreDifferentMarkets() (gas: 17669328)
+Suite result: ok. 6 passed; 0 failed; 0 skipped; finished in 17.81s (17.81s CPU time)
+
+Ran 11 tests for test/invariant/MarketInvariants.t.sol:MarketInvariantsKinkedTest
+[PASS] invariant_balanceEqualsUnlent() (runs: 1000, calls: 32000, reverts: 0)
+
+╭----------+--------------------+-------+---------+----------╮
+| Contract | Selector           | Calls | Reverts | Discards |
++============================================================+
+| Handler  | accrue             | 2374  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | borrow             | 2197  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | deposit            | 2267  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | depositCollateral  | 2310  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | donate             | 2310  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | liquidate          | 2273  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | movePrice          | 2271  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | payFee             | 2242  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | priceCrash         | 2271  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | priceOutage        | 2262  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | repay              | 2276  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | warp               | 2272  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | withdraw           | 2320  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | withdrawCollateral | 2355  | 0       | 0        |
+╰----------+--------------------+-------+---------+----------╯
+
+[PASS] invariant_bystanderMarketUnchanged() (runs: 1000, calls: 32000, reverts: 0)
+
+╭----------+--------------------+-------+---------+----------╮
+| Contract | Selector           | Calls | Reverts | Discards |
++============================================================+
+| Handler  | accrue             | 2374  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | borrow             | 2197  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | deposit            | 2267  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | depositCollateral  | 2310  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | donate             | 2310  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | liquidate          | 2273  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | movePrice          | 2271  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | payFee             | 2242  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | priceCrash         | 2271  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | priceOutage        | 2262  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | repay              | 2276  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | warp               | 2272  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | withdraw           | 2320  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | withdrawCollateral | 2355  | 0       | 0        |
+╰----------+--------------------+-------+---------+----------╯
+
+[PASS] invariant_callSummary() (runs: 1000, calls: 32000, reverts: 0)
+
+╭----------+--------------------+-------+---------+----------╮
+| Contract | Selector           | Calls | Reverts | Discards |
++============================================================+
+| Handler  | accrue             | 2374  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | borrow             | 2197  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | deposit            | 2267  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | depositCollateral  | 2310  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | donate             | 2310  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | liquidate          | 2273  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | movePrice          | 2271  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | payFee             | 2242  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | priceCrash         | 2271  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | priceOutage        | 2262  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | repay              | 2276  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | warp               | 2272  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | withdraw           | 2320  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | withdrawCollateral | 2355  | 0       | 0        |
+╰----------+--------------------+-------+---------+----------╯
+
+[PASS] invariant_collateralSums() (runs: 1000, calls: 32000, reverts: 0)
+
+╭----------+--------------------+-------+---------+----------╮
+| Contract | Selector           | Calls | Reverts | Discards |
++============================================================+
+| Handler  | accrue             | 2374  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | borrow             | 2197  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | deposit            | 2267  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | depositCollateral  | 2310  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | donate             | 2310  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | liquidate          | 2273  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | movePrice          | 2271  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | payFee             | 2242  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | priceCrash         | 2271  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | priceOutage        | 2262  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | repay              | 2276  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | warp               | 2272  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | withdraw           | 2320  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | withdrawCollateral | 2355  | 0       | 0        |
+╰----------+--------------------+-------+---------+----------╯
+
+[PASS] invariant_feeIsExactlyTenPercentOfInterest() (runs: 1000, calls: 32000, reverts: 0)
+
+╭----------+--------------------+-------+---------+----------╮
+| Contract | Selector           | Calls | Reverts | Discards |
++============================================================+
+| Handler  | accrue             | 2374  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | borrow             | 2197  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | deposit            | 2267  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | depositCollateral  | 2310  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | donate             | 2310  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | liquidate          | 2273  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | movePrice          | 2271  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | payFee             | 2242  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | priceCrash         | 2271  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | priceOutage        | 2262  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | repay              | 2276  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | warp               | 2272  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | withdraw           | 2320  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | withdrawCollateral | 2355  | 0       | 0        |
+╰----------+--------------------+-------+---------+----------╯
+
+[PASS] invariant_loanUnitsAndBorrowerSet() (runs: 1000, calls: 32000, reverts: 0)
+
+╭----------+--------------------+-------+---------+----------╮
+| Contract | Selector           | Calls | Reverts | Discards |
++============================================================+
+| Handler  | accrue             | 2374  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | borrow             | 2197  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | deposit            | 2267  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | depositCollateral  | 2310  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | donate             | 2310  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | liquidate          | 2273  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | movePrice          | 2271  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | payFee             | 2242  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | priceCrash         | 2271  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | priceOutage        | 2262  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | repay              | 2276  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | warp               | 2272  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | withdraw           | 2320  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | withdrawCollateral | 2355  | 0       | 0        |
+╰----------+--------------------+-------+---------+----------╯
+
+[PASS] invariant_lossOnlyWhenCollateralExhausted() (runs: 1000, calls: 32000, reverts: 0)
+
+╭----------+--------------------+-------+---------+----------╮
+| Contract | Selector           | Calls | Reverts | Discards |
++============================================================+
+| Handler  | accrue             | 2374  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | borrow             | 2197  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | deposit            | 2267  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | depositCollateral  | 2310  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | donate             | 2310  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | liquidate          | 2273  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | movePrice          | 2271  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | payFee             | 2242  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | priceCrash         | 2271  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | priceOutage        | 2262  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | repay              | 2276  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | warp               | 2272  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | withdraw           | 2320  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | withdrawCollateral | 2355  | 0       | 0        |
+╰----------+--------------------+-------+---------+----------╯
+
+[PASS] invariant_noLoanAboveLimitAfterBorrowerAction() (runs: 1000, calls: 32000, reverts: 0)
+
+╭----------+--------------------+-------+---------+----------╮
+| Contract | Selector           | Calls | Reverts | Discards |
++============================================================+
+| Handler  | accrue             | 2374  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | borrow             | 2197  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | deposit            | 2267  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | depositCollateral  | 2310  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | donate             | 2310  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | liquidate          | 2273  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | movePrice          | 2271  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | payFee             | 2242  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | priceCrash         | 2271  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | priceOutage        | 2262  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | repay              | 2276  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | warp               | 2272  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | withdraw           | 2320  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | withdrawCollateral | 2355  | 0       | 0        |
+╰----------+--------------------+-------+---------+----------╯
+
+[PASS] invariant_receiptsAreBackedAndNeverFavourTheLender() (runs: 1000, calls: 32000, reverts: 0)
+
+╭----------+--------------------+-------+---------+----------╮
+| Contract | Selector           | Calls | Reverts | Discards |
++============================================================+
+| Handler  | accrue             | 2374  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | borrow             | 2197  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | deposit            | 2267  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | depositCollateral  | 2310  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | donate             | 2310  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | liquidate          | 2273  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | movePrice          | 2271  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | payFee             | 2242  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | priceCrash         | 2271  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | priceOutage        | 2262  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | repay              | 2276  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | warp               | 2272  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | withdraw           | 2320  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | withdrawCollateral | 2355  | 0       | 0        |
+╰----------+--------------------+-------+---------+----------╯
+
+[PASS] invariant_termsNeverMove() (runs: 1000, calls: 32000, reverts: 0)
+
+╭----------+--------------------+-------+---------+----------╮
+| Contract | Selector           | Calls | Reverts | Discards |
++============================================================+
+| Handler  | accrue             | 2374  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | borrow             | 2197  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | deposit            | 2267  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | depositCollateral  | 2310  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | donate             | 2310  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | liquidate          | 2273  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | movePrice          | 2271  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | payFee             | 2242  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | priceCrash         | 2271  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | priceOutage        | 2262  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | repay              | 2276  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | warp               | 2272  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | withdraw           | 2320  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | withdrawCollateral | 2355  | 0       | 0        |
+╰----------+--------------------+-------+---------+----------╯
+
+[PASS] invariant_unlentPlusLoansEqualsDepositsPlusFeeOwed() (runs: 1000, calls: 32000, reverts: 0)
+
+╭----------+--------------------+-------+---------+----------╮
+| Contract | Selector           | Calls | Reverts | Discards |
++============================================================+
+| Handler  | accrue             | 2374  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | borrow             | 2197  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | deposit            | 2267  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | depositCollateral  | 2310  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | donate             | 2310  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | liquidate          | 2273  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | movePrice          | 2271  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | payFee             | 2242  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | priceCrash         | 2271  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | priceOutage        | 2262  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | repay              | 2276  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | warp               | 2272  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | withdraw           | 2320  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | withdrawCollateral | 2355  | 0       | 0        |
+╰----------+--------------------+-------+---------+----------╯
+
+Suite result: ok. 11 passed; 0 failed; 0 skipped; finished in 20.47s (67.74s CPU time)
+
+Ran 11 tests for test/invariant/MarketInvariants.t.sol:MarketInvariantsLinearTest
+[PASS] invariant_balanceEqualsUnlent() (runs: 1000, calls: 32000, reverts: 0)
+
+╭----------+--------------------+-------+---------+----------╮
+| Contract | Selector           | Calls | Reverts | Discards |
++============================================================+
+| Handler  | accrue             | 2374  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | borrow             | 2197  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | deposit            | 2267  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | depositCollateral  | 2310  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | donate             | 2310  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | liquidate          | 2273  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | movePrice          | 2271  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | payFee             | 2242  | 0       | 0        |
+|----------+-----------------
+[output cut: 64606 bytes were produced; the first 32768 and the last 16363 are shown]
+|----------+--------------------+-------+---------+----------|
+| Handler  | borrow             | 2197  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | deposit            | 2267  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | depositCollateral  | 2310  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | donate             | 2310  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | liquidate          | 2273  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | movePrice          | 2271  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | payFee             | 2242  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | priceCrash         | 2271  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | priceOutage        | 2262  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | repay              | 2276  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | warp               | 2272  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | withdraw           | 2320  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | withdrawCollateral | 2355  | 0       | 0        |
+╰----------+--------------------+-------+---------+----------╯
+
+[PASS] invariant_termsNeverMove() (runs: 1000, calls: 32000, reverts: 0)
+
+╭----------+--------------------+-------+---------+----------╮
+| Contract | Selector           | Calls | Reverts | Discards |
++============================================================+
+| Handler  | accrue             | 2374  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | borrow             | 2197  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | deposit            | 2267  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | depositCollateral  | 2310  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | donate             | 2310  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | liquidate          | 2273  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | movePrice          | 2271  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | payFee             | 2242  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | priceCrash         | 2271  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | priceOutage        | 2262  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | repay              | 2276  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | warp               | 2272  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | withdraw           | 2320  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | withdrawCollateral | 2355  | 0       | 0        |
+╰----------+--------------------+-------+---------+----------╯
+
+[PASS] invariant_unlentPlusLoansEqualsDepositsPlusFeeOwed() (runs: 1000, calls: 32000, reverts: 0)
+
+╭----------+--------------------+-------+---------+----------╮
+| Contract | Selector           | Calls | Reverts | Discards |
++============================================================+
+| Handler  | accrue             | 2374  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | borrow             | 2197  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | deposit            | 2267  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | depositCollateral  | 2310  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | donate             | 2310  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | liquidate          | 2273  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | movePrice          | 2271  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | payFee             | 2242  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | priceCrash         | 2271  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | priceOutage        | 2262  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | repay              | 2276  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | warp               | 2272  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | withdraw           | 2320  | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | withdrawCollateral | 2355  | 0       | 0        |
+╰----------+--------------------+-------+---------+----------╯
+
+Suite result: ok. 11 passed; 0 failed; 0 skipped; finished in 20.47s (82.09s CPU time)
+
+Ran 25 tests for test/FoundationTill.t.sol:FoundationTillTest
+[PASS] testFuzz_coinsLeaveOnlyToTheBeneficiaryOfTheMoment(bytes32) (runs: 10000, μ: 1038866, ~: 1038693)
+[PASS] testFuzz_collectSendsExactlyTheBalance(uint256) (runs: 10000, μ: 91185, ~: 90724)
+[PASS] test_acceptHandover_strangerCannotAccept() (gas: 49415)
+[PASS] test_acceptHandover_withNoSuccessorNamed_everyCallerRefused() (gas: 25317)
+[PASS] test_anyoneCanReadBeneficiaryAndSuccessor() (gas: 46487)
+[PASS] test_collect_coinCallingBackCannotTakeAnythingTwice() (gas: 1845761)
+[PASS] test_collect_coinThatDoesNotMoveIsRefused_noFalseEvent() (gas: 231206)
+[PASS] test_collect_nonCoinAddressIsRefused() (gas: 23711)
+[PASS] test_collect_oneAssetAtATime() (gas: 155349)
+[PASS] test_collect_onlyTheBeneficiary_wholeBalance() (gas: 151505)
+[PASS] test_construction() (gas: 17230)
+[PASS] test_constructor_rejectsZeroBeneficiary() (gas: 58782)
+[PASS] test_feeOnTransferCoin_eventStatesWhatTheTillSent() (gas: 895049)
+[PASS] test_freezableCoin_frozenBeneficiaryCannotReceive_handoverMovesItOn() (gas: 1014821)
+[PASS] test_freezableCoin_frozenTillCannotPay_otherCoinStillPays() (gas: 1047197)
+[PASS] test_handover_chainOfThree() (gas: 139516)
+[PASS] test_handover_coinsBeforeAndAfterGoToTheNewBeneficiaryAlone() (gas: 717668)
+[PASS] test_handover_twoSteps() (gas: 136217)
+[PASS] test_marketPaysItsFeeIntoTheTill() (gas: 692961)
+[PASS] test_nameSuccessor_beneficiaryCannotNameItself() (gas: 39792)
+[PASS] test_nameSuccessor_clearedSuccessorCannotAccept() (gas: 37160)
+[PASS] test_nameSuccessor_onlyTheBeneficiary() (gas: 52460)
+[PASS] test_nameSuccessor_replacedSuccessorCannotAccept_replacingOneCan() (gas: 44364)
+[PASS] test_refusesTheChainsOwnCurrency() (gas: 110387)
+[PASS] test_withdrawPaysTheFeeIntoTheTill() (gas: 697720)
+Suite result: ok. 25 passed; 0 failed; 0 skipped; finished in 20.47s (21.70s CPU time)
+
+Ran 33 tests for test/Market.t.sol:MarketTest
+[PASS] testFuzz_depositWithdrawRoundTrip_neverFavoursLender(uint256,uint256) (runs: 10000, μ: 224611, ~: 224718)
+[PASS] testFuzz_feeIsExactlyTenPercentOfInterest(uint256,uint256) (runs: 10000, μ: 1023437, ~: 1041557)
+[PASS] testFuzz_liquidationIncentive(uint256) (runs: 10000, μ: 4302286, ~: 4302746)
+[PASS] test_accrual_noLoansNoInterest() (gas: 224433)
+[PASS] test_accrual_splitsInterest() (gas: 609779)
+[PASS] test_borrow_rejects() (gas: 564385)
+[PASS] test_borrow_upToLimit() (gas: 729876)
+[PASS] test_borrowerSet_addAndRemove() (gas: 1044404)
+[PASS] test_collateral_depositAndWithdraw() (gas: 221096)
+[PASS] test_collateral_rejects() (gas: 188834)
+[PASS] test_constructor_rejects() (gas: 510736)
+[PASS] test_deposit_mintsReceipts() (gas: 255329)
+[PASS] test_deposit_onBehalf() (gas: 217450)
+[PASS] test_deposit_rejects() (gas: 106645)
+[PASS] test_firstDepositInflationAttackFails() (gas: 305801)
+[PASS] test_liquidationIncentive_capped() (gas: 4293556)
+[PASS] test_liquidationIncentive_formula() (gas: 11574)
+[PASS] test_loansAboveLimit_pagedAndFiltered() (gas: 1041199)
+[PASS] test_priceSourceWithoutCodeIsUnavailable() (gas: 4302666)
+[PASS] test_pullRevertsWhenNothingReceived() (gas: 5044474)
+[PASS] test_receiptDecimals_fallbackWhenTokenHasNone() (gas: 9311024)
+[PASS] test_receiptValueGrowsWithInterest() (gas: 627215)
+[PASS] test_reentrancyGuarded() (gas: 5344202)
+[PASS] test_repay_partialAndFull_byAnyone() (gas: 654660)
+[PASS] test_repay_rejects() (gas: 126535)
+[PASS] test_roundingChargesBorrowerUp() (gas: 599678)
+[PASS] test_terms() (gas: 53696)
+[PASS] test_views_includePendingAccrual() (gas: 650671)
+[PASS] test_withdrawCollateral_refusedAboveLimit() (gas: 576774)
+[PASS] test_withdrawCollateral_refusedWhenPriceZeroOrFailing_evenWithNoLoan() (gas: 238960)
+[PASS] test_withdraw_refusedOnlyWhenUnlentShort() (gas: 568735)
+[PASS] test_withdraw_rejects() (gas: 240427)
+[PASS] test_withdraw_returnsValue() (gas: 290706)
+Suite result: ok. 33 passed; 0 failed; 0 skipped; finished in 17.03s (21.24s CPU time)
+
+Ran 19 test suites in 20.47s (143.20s CPU time): 174 tests passed, 0 failed, 0 skipped (174 total tests)
+
+╭---------------------------------------+-------------------+--------------------+------------------+------------------╮
+| File                                  | % Lines           | % Statements       | % Branches       | % Funcs          |
++======================================================================================================================+
+| script/DeployLoveh1.s.sol             | 100.00% (21/21)   | 87.88% (29/33)     | 0.00% (0/4)      | 100.00% (1/1)    |
+|---------------------------------------+-------------------+--------------------+------------------+------------------|
+| script/DeployTill.s.sol               | 100.00% (26/26)   | 93.10% (27/29)     | 77.78% (7/9)     | 100.00% (4/4)    |
+|---------------------------------------+-------------------+--------------------+------------------+------------------|
+| src/FixedPoint.sol                    | 100.00% (10/10)   | 100.00% (13/13)    | 100.00% (1/1)    | 100.00% (4/4)    |
+|---------------------------------------+-------------------+--------------------+------------------+------------------|
+| src/FoundationTill.sol                | 100.00% (22/22)   | 100.00% (27/27)    | 100.00% (6/6)    | 100.00% (4/4)    |
+|---------------------------------------+-------------------+--------------------+------------------+------------------|
+| src/Market.sol                        | 100.00% (295/295) | 99.24% (394/397)   | 94.64% (53/56)   | 100.00% (46/46)  |
+|---------------------------------------+-------------------+--------------------+------------------+------------------|
+| src/MarketFactory.sol                 | 100.00% (31/31)   | 100.00% (42/42)    | 100.00% (9/9)    | 100.00% (6/6)    |
+|---------------------------------------+-------------------+--------------------+------------------+------------------|
+| src/ReceiptToken.sol                  | 100.00% (40/40)   | 100.00% (39/39)    | 100.00% (8/8)    | 100.00% (8/8)    |
+|---------------------------------------+-------------------+--------------------+------------------+------------------|
+| src/rates/KinkedRateFormula.sol       | 100.00% (13/13)   | 100.00% (23/23)    | 100.00% (4/4)    | 100.00% (2/2)    |
+|---------------------------------------+-------------------+--------------------+------------------+------------------|
+| src/rates/LinearRateFormula.sol       | 100.00% (7/7)     | 100.00% (9/9)      | 100.00% (1/1)    | 100.00% (2/2)    |
+|---------------------------------------+-------------------+--------------------+------------------+------------------|
+| src/rates/Utilisation.sol             | 100.00% (5/5)     | 100.00% (10/10)    | 100.00% (3/3)    | 100.00% (1/1)    |
+|---------------------------------------+-------------------+--------------------+------------------+------------------|
+| test/Base.t.sol                       | 100.00% (45/45)   | 100.00% (42/42)    | 100.00% (0/0)    | 100.00% (10/10)  |
+|---------------------------------------+-------------------+--------------------+------------------+------------------|
+| test/Borrowable.t.sol                 | 100.00% (4/4)     | 100.00% (2/2)      | 100.00% (0/0)    | 100.00% (2/2)    |
+|---------------------------------------+-------------------+--------------------+------------------+------------------|
+| test/DeployScripts.t.sol              | 100.00% (10/10)   | 100.00% (6/6)      | 100.00% (0/0)    | 100.00% (4/4)    |
+|---------------------------------------+-------------------+--------------------+------------------+------------------|
+| test/FixedPoint.t.sol                 | 100.00% (8/8)     | 100.00% (8/8)      | 100.00% (0/0)    | 100.00% (4/4)    |
+|---------------------------------------+-------------------+--------------------+------------------+------------------|
+| test/FoundationTill.t.sol             | 100.00% (4/4)     | 100.00% (2/2)      | 100.00% (0/0)    | 100.00% (2/2)    |
+|---------------------------------------+-------------------+--------------------+------------------+------------------|
+| test/Market.t.sol                     | 100.00% (5/5)     | 100.00% (6/6)      | 100.00% (1/1)    | 100.00% (2/2)    |
+|---------------------------------------+-------------------+--------------------+------------------+------------------|
+| test/Surface.t.sol                    | 95.83% (46/48)    | 96.00% (72/75)     | 71.43% (5/7)     | 100.00% (8/8)    |
+|---------------------------------------+-------------------+--------------------+------------------+------------------|
+| test/invariant/Handler.sol            | 96.67% (174/180)  | 96.97% (224/231)   | 71.43% (40/56)   | 94.74% (18/19)   |
+|---------------------------------------+-------------------+--------------------+------------------+------------------|
+| test/invariant/MarketInvariants.t.sol | 100.00% (4/4)     | 100.00% (2/2)      | 100.00% (0/0)    | 100.00% (2/2)    |
+|---------------------------------------+-------------------+--------------------+------------------+------------------|
+| test/mocks/FeeOnTransferToken.sol     | 100.00% (10/10)   | 100.00% (9/9)      | 50.00% (2/4)     | 100.00% (2/2)    |
+|---------------------------------------+-------------------+--------------------+------------------+------------------|
+| test/mocks/FreezableToken.sol         | 100.00% (5/5)     | 100.00% (3/3)      | 100.00% (2/2)    | 100.00% (2/2)    |
+|---------------------------------------+-------------------+--------------------+------------------+------------------|
+| test/mocks/MockERC20.sol              | 92.59% (25/27)    | 90.48% (19/21)     | 20.00% (1/5)     | 100.00% (6/6)    |
+|---------------------------------------+-------------------+--------------------+------------------+------------------|
+| test/mocks/MockPriceSource.sol        | 100.00% (13/13)   | 100.00% (7/7)      | 100.00% (2/2)    | 100.00% (5/5)    |
+|---------------------------------------+-------------------+--------------------+------------------+------------------|
+| test/mocks/ReenteringCoin.sol         | 92.86% (13/14)    | 91.67% (11/12)     | 100.00% (3/3)    | 100.00% (3/3)    |
+|---------------------------------------+-------------------+--------------------+------------------+------------------|
+| Total                                 | 98.70% (836/847)  | 97.90% (1026/1048) | 81.77% (148/181) | 99.33% (148/149) |
+╰---------------------------------------+-------------------+--------------------+------------------+------------------╯
+[exit code 0]
