@@ -1,0 +1,4 @@
+$ forge fmt --check
+(after the one formatting difference it reported in test/FoundationTill.t.sol was corrected by hand)
+
+[exit code 0]
