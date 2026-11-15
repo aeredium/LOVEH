@@ -151,14 +151,26 @@ contract Market is IMarket, ReentrancyGuard {
 
         _deposits -= amount;
         _unlent -= amount;
-        // The fee is paid automatically when the unlent funds left allow it.
+        // The fee is paid automatically when the unlent funds left allow it. It is set aside here and
+        // sent last: a payment the loan token refuses stays owed and never stops a withdrawal.
         uint256 fee = FixedPoint.min(_feeOwed, _unlent);
-        if (fee != 0) _recordFeePayment(fee);
+        if (fee != 0) {
+            _feeOwed -= fee;
+            _unlent -= fee;
+        }
         emit Withdrawn(msg.sender, receiver, amount, receiptAmount);
 
         IReceiptToken(receiptToken).burn(msg.sender, receiptAmount);
         IERC20(loanToken).safeTransfer(receiver, amount);
-        if (fee != 0) IERC20(loanToken).safeTransfer(feeRecipient, fee);
+        if (fee != 0) {
+            if (_trySendFee(fee)) {
+                feePaid += fee;
+                emit FeePaid(feeRecipient, fee);
+            } else {
+                _feeOwed += fee;
+                _unlent += fee;
+            }
+        }
     }
 
     // ------------------------------------------------------------------ collateral
@@ -510,6 +522,17 @@ contract Market is IMarket, ReentrancyGuard {
         totalLoss += lossToLenders;
         feeWrittenOff += lossToFee;
         emit LossWrittenOff(borrower, loan, lossToLenders, lossToFee);
+    }
+
+    /// @dev Sends the fee to the fee recipient and reports whether the loan token carried the transfer
+    ///      out, judged as SafeERC20 judges it: the call succeeds and returns nothing or returns true.
+    ///      It never reverts on the token's refusal (for instance when the token's issuer has frozen
+    ///      the fee recipient), so the caller can leave the fee owed.
+    function _trySendFee(uint256 amount) internal returns (bool) {
+        (bool ok, bytes memory returned) = loanToken.call(abi.encodeCall(IERC20.transfer, (feeRecipient, amount)));
+        if (!ok) return false;
+        if (returned.length == 0) return true;
+        return returned.length >= 32 && uint256(bytes32(returned)) == 1;
     }
 
     function _recordFeePayment(uint256 amount) internal {
