@@ -1,0 +1,103 @@
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.28;
+
+/// @title IRateRecord
+/// @notice The rate record of one loan coin: the figure a following rate formula reads. Anyone may
+///         deliver a reading or a signer handover signed by the record's signer as an EIP-712 typed
+///         instruction (domain name `AERKey`, version `1`, bound to the chain id and to the record's
+///         address). The record checks the signature, ranks the ten candidate protocols by deposits,
+///         keeps a history of their stated rates and answers one stored centre: the mean of the three
+///         leaders' 24-hour average rates. It holds no value and moves no coin.
+///
+/// Rates are per-second rates scaled by 1e18, the unit of IRateFormula.
+interface IRateRecord {
+    // ------------------------------------------------------------------ typed instructions
+
+    /// @notice One reading of the ten candidates, as the signer saw them at `asOf`.
+    ///         `deposits[i]` is the amount deposited in candidate `i`, used only to rank;
+    ///         `rates[i]` is candidate `i`'s borrowing rate per second scaled by 1e18.
+    struct Reading {
+        bytes32 id;
+        uint64 asOf;
+        uint256[10] deposits;
+        uint256[10] rates;
+        uint256 deadline;
+    }
+
+    /// @notice A handover of the signer to `next`, effective 72 hours after it is submitted.
+    struct Rotate {
+        bytes32 id;
+        address next;
+        uint256 deadline;
+    }
+
+    // ------------------------------------------------------------------ events
+
+    event ReadingAccepted(bytes32 indexed id, uint64 asOf, uint256[3] leaders, uint256 centre);
+    event SignerRotationQueued(bytes32 indexed id, address indexed current, address indexed next, uint256 readyAt);
+    event SignerRotated(address indexed previous, address indexed next);
+
+    // ------------------------------------------------------------------ errors
+
+    error BadConfig();
+    error AlreadyUsed(bytes32 id);
+    error Expired(uint256 deadline);
+    error BadSignature();
+    error FromTheFuture(uint64 asOf);
+    error TooSoon(uint64 asOf, uint64 lastAsOf);
+    error RateTooHigh(uint256 i, uint256 rate);
+    error TooFewLeaders();
+    error ZeroAddress();
+    error NotQueued(bytes32 id);
+    error NotReady(uint256 readyAt);
+    error Voided(bytes32 id);
+    error NotKept(uint256 position);
+
+    // ------------------------------------------------------------------ instructions
+
+    /// @notice Accept a reading signed by the current signer. Refused, each with its own error, when
+    ///         the deadline is past, the id was used before, the signature is not the signer's, `asOf`
+    ///         is after the block, `asOf` is less than 30 minutes after the last accepted reading, any
+    ///         rate is above the record's highest rate, or fewer than three candidates have deposits.
+    ///         A refused reading changes nothing.
+    function submitReading(Reading calldata r, bytes calldata signature) external;
+
+    /// @notice Queue a handover of the signer to `r.next`, signed by the current signer. It becomes
+    ///         executable 72 hours after this block. Nobody can cancel it.
+    function submitRotate(Rotate calldata r, bytes calldata signature) external;
+
+    /// @notice Execute a queued handover once its delay has passed. Anyone may call it. Every
+    ///         handover queued before the last executed one is void forever.
+    function executeRotate(bytes32 id) external;
+
+    // ------------------------------------------------------------------ digests
+
+    /// @notice The EIP-712 digest the signer signs for a reading.
+    function readingDigest(Reading calldata r) external view returns (bytes32);
+    /// @notice The EIP-712 digest the signer signs for a handover.
+    function rotateDigest(Rotate calldata r) external view returns (bytes32);
+
+    // ------------------------------------------------------------------ what the record answers
+
+    /// @notice The stored centre: the mean of the three leaders' 24-hour average rates at the last
+    ///         accepted reading, or the initial centre before the second reading. Never reverts and
+    ///         never depends on the clock.
+    function centre() external view returns (uint256);
+    /// @notice The indexes of the three leaders named by the last accepted reading, in rank order.
+    function leaders() external view returns (uint256[3] memory);
+    /// @notice `asOf` of the last accepted reading; zero before any.
+    function lastAsOf() external view returns (uint64);
+    /// @notice The number of readings accepted so far.
+    function readingCount() external view returns (uint256);
+    /// @notice The ten candidates' labels.
+    function candidates() external view returns (bytes32[10] memory);
+    /// @notice The current signer.
+    function signer() external view returns (address);
+    /// @notice One stored reading by its position among all accepted readings (0 is the first ever):
+    ///         its `asOf`, its ten rates and its ten running sums. Refused with `NotKept` once the ring
+    ///         has overwritten it or before it is made.
+    function readingAt(uint256 position)
+        external
+        view
+        returns (uint64 asOf, uint256[10] memory rates, uint256[10] memory sums);
+}

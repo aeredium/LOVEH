@@ -1,0 +1,294 @@
+// SPDX-License-Identifier: LicenseRef-PolyForm-Shield-1.0.0
+pragma solidity 0.8.28;
+
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+
+import {IRateRecord} from "../../interfaces/IRateRecord.sol";
+
+/// @title RateRecord
+/// @notice The rate record of one loan coin. It follows ten candidate lending protocols on other
+///         chains through readings signed by the AERKey signer and delivered by anyone. On each
+///         accepted reading it ranks the candidates by deposits, names the three leaders, extends a
+///         history of the stated rates and stores one figure, the centre: the mean of the three
+///         leaders' average rates over the last 24 hours. A following rate formula reads that figure.
+///
+/// The record holds no value and moves no coin. It has no owner: the only authority is the signer,
+/// and the signer changes only by a handover the signer itself signs, effective 72 hours later.
+///
+/// Averaging. Every accepted reading stores, for each candidate, the rate it states and a running
+/// sum: the sum at the previous reading plus the previous reading's rate multiplied by the seconds
+/// between the two. A stated rate thus counts forward, from its own reading until the next one, so
+/// a silent stretch counts at the last stated rates. The average of a candidate over the window
+/// ending at a reading is the difference of the running sums at the window's two ends divided by its
+/// length; the sum at the window's start is interpolated from the latest reading at or before it.
+///
+/// Widths. `asOf` is a uint64 and every rate is at most `maxRate`, which is below 2^192, so a running
+/// sum is below 2^192 * 2^64 = 2^256 over any span of time: no sum can overflow.
+contract RateRecord is IRateRecord, EIP712 {
+    // ------------------------------------------------------------------ constants
+
+    /// @notice The number of candidate protocols the record follows.
+    uint256 public constant CANDIDATES = 10;
+    /// @notice The number of leaders whose averages make the centre.
+    uint256 public constant LEADERS = 3;
+    /// @notice The length of the averaging window.
+    uint256 public constant WINDOW = 24 hours;
+    /// @notice The least time between two accepted readings.
+    uint256 public constant MIN_INTERVAL = 30 minutes;
+    /// @notice The number of readings kept.
+    uint256 public constant HISTORY = 64;
+    /// @notice The delay between a handover's submission and its execution.
+    uint256 public constant ROTATE_DELAY = 72 hours;
+
+    /// @dev The widest rate the running sums can carry over a uint64 span without overflowing.
+    uint256 internal constant MAX_RATE_WIDTH = type(uint192).max;
+
+    bytes32 internal constant READING_TYPEHASH =
+        keccak256("Reading(bytes32 id,uint64 asOf,uint256[10] deposits,uint256[10] rates,uint256 deadline)");
+    bytes32 internal constant ROTATE_TYPEHASH = keccak256("Rotate(bytes32 id,address next,uint256 deadline)");
+
+    // ------------------------------------------------------------------ fixed at creation
+
+    /// @notice The highest per-second rate, scaled by 1e18, a reading may state for any candidate.
+    uint256 public immutable maxRate;
+    /// @notice The centre answered before the record has a history.
+    uint256 public immutable initialCentre;
+
+    bytes32[10] internal _candidates;
+
+    // ------------------------------------------------------------------ state
+
+    /// @dev One stored reading: when it was taken, the ten rates it stated and the ten running sums
+    ///      up to it (see the averaging note above).
+    struct Stored {
+        uint64 asOf;
+        uint256[10] rates;
+        uint256[10] sums;
+    }
+
+    /// @dev A queued handover. `generation` is the count of executed handovers at queueing time; a
+    ///      handover executes only while that count is unchanged.
+    struct Handover {
+        address next;
+        uint256 readyAt;
+        uint256 generation;
+    }
+
+    /// @inheritdoc IRateRecord
+    address public signer;
+    /// @inheritdoc IRateRecord
+    uint256 public centre;
+    /// @inheritdoc IRateRecord
+    uint64 public lastAsOf;
+    /// @inheritdoc IRateRecord
+    uint256 public readingCount;
+
+    uint256[3] internal _leaders;
+    /// @dev The ring of kept readings; reading `n` lives in slot `n % HISTORY`.
+    Stored[64] internal _ring;
+    mapping(bytes32 id => bool) internal _used;
+    mapping(bytes32 id => Handover) internal _handovers;
+    uint256 internal _executedHandovers;
+
+    // ------------------------------------------------------------------ construction
+
+    constructor(bytes32[10] memory candidates_, uint256 maxRate_, uint256 initialCentre_, address signer_)
+        EIP712("AERKey", "1")
+    {
+        assert(HISTORY * MIN_INTERVAL > WINDOW);
+        for (uint256 i = 0; i < CANDIDATES; ++i) {
+            if (candidates_[i] == bytes32(0)) revert BadConfig();
+            for (uint256 j = 0; j < i; ++j) {
+                if (candidates_[j] == candidates_[i]) revert BadConfig();
+            }
+        }
+        if (maxRate_ == 0 || maxRate_ > MAX_RATE_WIDTH) revert BadConfig();
+        if (initialCentre_ == 0 || initialCentre_ > maxRate_) revert BadConfig();
+        if (signer_ == address(0)) revert BadConfig();
+
+        _candidates = candidates_;
+        maxRate = maxRate_;
+        initialCentre = initialCentre_;
+        signer = signer_;
+        centre = initialCentre_;
+    }
+
+    // ------------------------------------------------------------------ readings
+
+    /// @inheritdoc IRateRecord
+    function submitReading(Reading calldata r, bytes calldata signature) external {
+        _verify(r.id, r.deadline, readingDigest(r), signature);
+        // The clock is the chain's; a reading dated after it is refused by design.
+        // forge-lint: disable-next-line(block-timestamp)
+        if (r.asOf > block.timestamp) revert FromTheFuture(r.asOf);
+        uint256 count = readingCount;
+        uint64 last = lastAsOf;
+        if (count != 0 && r.asOf < last + MIN_INTERVAL) revert TooSoon(r.asOf, last);
+        for (uint256 i = 0; i < CANDIDATES; ++i) {
+            if (r.rates[i] > maxRate) revert RateTooHigh(i, r.rates[i]);
+        }
+        uint256[3] memory top = _rank(r.deposits);
+
+        // Accepted: everything below changes state.
+        _used[r.id] = true;
+        Stored storage s = _ring[count % HISTORY];
+        s.asOf = r.asOf;
+        if (count == 0) {
+            // The first reading starts the history with running sums of zero (fresh storage).
+            for (uint256 i = 0; i < CANDIDATES; ++i) {
+                s.rates[i] = r.rates[i];
+            }
+        } else {
+            Stored storage p = _ring[(count - 1) % HISTORY];
+            uint256 span = r.asOf - p.asOf;
+            for (uint256 i = 0; i < CANDIDATES; ++i) {
+                s.sums[i] = p.sums[i] + p.rates[i] * span;
+                s.rates[i] = r.rates[i];
+            }
+        }
+        _leaders = top;
+        lastAsOf = r.asOf;
+        readingCount = count + 1;
+        // The first reading has no span to average over: the centre stays what it is.
+        if (count != 0) centre = _centreAt(count, top);
+        emit ReadingAccepted(r.id, r.asOf, top, centre);
+    }
+
+    // ------------------------------------------------------------------ handover
+
+    /// @inheritdoc IRateRecord
+    function submitRotate(Rotate calldata r, bytes calldata signature) external {
+        _verify(r.id, r.deadline, rotateDigest(r), signature);
+        if (r.next == address(0)) revert ZeroAddress();
+
+        _used[r.id] = true;
+        uint256 readyAt = block.timestamp + ROTATE_DELAY;
+        _handovers[r.id] = Handover({next: r.next, readyAt: readyAt, generation: _executedHandovers});
+        emit SignerRotationQueued(r.id, signer, r.next, readyAt);
+    }
+
+    /// @inheritdoc IRateRecord
+    function executeRotate(bytes32 id) external {
+        Handover storage h = _handovers[id];
+        if (h.next == address(0)) revert NotQueued(id);
+        if (h.generation != _executedHandovers) revert Voided(id);
+        // forge-lint: disable-next-line(block-timestamp)
+        if (block.timestamp < h.readyAt) revert NotReady(h.readyAt);
+
+        address previous = signer;
+        signer = h.next;
+        _executedHandovers += 1;
+        emit SignerRotated(previous, h.next);
+    }
+
+    // ------------------------------------------------------------------ digests
+
+    /// @inheritdoc IRateRecord
+    function readingDigest(Reading calldata r) public view returns (bytes32) {
+        return _hashTypedDataV4(
+            keccak256(
+                abi.encode(
+                    READING_TYPEHASH,
+                    r.id,
+                    r.asOf,
+                    keccak256(abi.encode(r.deposits)),
+                    keccak256(abi.encode(r.rates)),
+                    r.deadline
+                )
+            )
+        );
+    }
+
+    /// @inheritdoc IRateRecord
+    function rotateDigest(Rotate calldata r) public view returns (bytes32) {
+        return _hashTypedDataV4(keccak256(abi.encode(ROTATE_TYPEHASH, r.id, r.next, r.deadline)));
+    }
+
+    // ------------------------------------------------------------------ views
+
+    /// @inheritdoc IRateRecord
+    function leaders() external view returns (uint256[3] memory) {
+        return _leaders;
+    }
+
+    /// @inheritdoc IRateRecord
+    function candidates() external view returns (bytes32[10] memory) {
+        return _candidates;
+    }
+
+    /// @inheritdoc IRateRecord
+    function readingAt(uint256 position)
+        external
+        view
+        returns (uint64 asOf, uint256[10] memory rates, uint256[10] memory sums)
+    {
+        uint256 count = readingCount;
+        if (position >= count || position + HISTORY < count) revert NotKept(position);
+        Stored storage s = _ring[position % HISTORY];
+        return (s.asOf, s.rates, s.sums);
+    }
+
+    // ------------------------------------------------------------------ internals
+
+    /// @dev The three checks every instruction passes first, in this order: not expired, id unused,
+    ///      signature of the current signer. A malformed signature is a bad signature.
+    function _verify(bytes32 id, uint256 deadline, bytes32 digest, bytes calldata signature) internal view {
+        // forge-lint: disable-next-line(block-timestamp)
+        if (block.timestamp > deadline) revert Expired(deadline);
+        if (_used[id]) revert AlreadyUsed(id);
+        (address recovered, ECDSA.RecoverError err,) = ECDSA.tryRecover(digest, signature);
+        if (err != ECDSA.RecoverError.NoError || recovered != signer) revert BadSignature();
+    }
+
+    /// @dev The three candidates with the largest deposits among those above zero, in rank order; a
+    ///      tie is won by the lower index. Fewer than three above zero is refused.
+    function _rank(uint256[10] calldata deposits) internal pure returns (uint256[3] memory top) {
+        bool[10] memory taken;
+        for (uint256 j = 0; j < LEADERS; ++j) {
+            uint256 best = CANDIDATES;
+            uint256 bestDeposit = 0;
+            for (uint256 i = 0; i < CANDIDATES; ++i) {
+                if (taken[i]) continue;
+                if (deposits[i] > bestDeposit) {
+                    best = i;
+                    bestDeposit = deposits[i];
+                }
+            }
+            if (best == CANDIDATES) revert TooFewLeaders();
+            taken[best] = true;
+            top[j] = best;
+        }
+    }
+
+    /// @dev The centre at reading `n` (already stored, `n >= 1`): the sum of the leaders' averages
+    ///      over the window ending at `n`, divided by three, rounded down.
+    function _centreAt(uint256 n, uint256[3] memory top) internal view returns (uint256) {
+        Stored storage latest = _ring[n % HISTORY];
+        uint256 asOf = latest.asOf;
+        uint256 oldest = n + 1 > HISTORY ? n + 1 - HISTORY : 0;
+
+        // The window starts WINDOW before this reading, or at the first stored reading if the
+        // history is shorter.
+        uint256 start = asOf > WINDOW ? asOf - WINDOW : 0;
+        uint256 oldestAsOf = _ring[oldest % HISTORY].asOf;
+        if (start < oldestAsOf) start = oldestAsOf;
+
+        // The latest stored reading at or before the start; the oldest qualifies at the latest.
+        uint256 k = n - 1;
+        while (k > oldest && _ring[k % HISTORY].asOf > start) {
+            --k;
+        }
+        Stored storage base = _ring[k % HISTORY];
+        uint256 gap = start - base.asOf;
+        uint256 span = asOf - start;
+
+        uint256 total = 0;
+        for (uint256 j = 0; j < LEADERS; ++j) {
+            uint256 i = top[j];
+            uint256 sumAtStart = base.sums[i] + base.rates[i] * gap;
+            total += (latest.sums[i] - sumAtStart) / span;
+        }
+        return total / LEADERS;
+    }
+}
