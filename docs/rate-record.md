@@ -138,11 +138,33 @@ If the other two leaders stayed at 5 percent, the centre moved from 5 percent to
 The spike hour stays in the window until 24 hours after it ended: at hour 49 the window is hours 25 to 49
 and still holds it; at hour 50 the window is hours 26 to 50 and the average is 5 percent again.
 
+## The centre over time
+
+A market charges the whole time since its last accrual at the one rate the formula answers when the
+market is next touched. A reading delivered in between moves the centre, and anyone may deliver one
+at any moment up to its deadline. So that a reading prices only the time after its delivery, and never
+the idle time before it, the record keeps a checkpoint for every change of the centre: the time of
+the block that stored it, the centre from then on, and the integral of the centre over time from the
+record's creation up to that block. A reading that leaves the centre unchanged makes no checkpoint.
+
+`centreOver(from, to)` answers the mean of the centre over the span from `from` to `to`, weighted by
+time, from those checkpoints: the difference of the integrals at the two ends divided by the span's
+length, rounded down. Each centre counts from the block in which the reading that stored it was
+delivered until the next change; what counts is the block of delivery, not the reading's `asOf`. Time
+before the record's creation is not counted: a `from` earlier than that is raised to the creation. A
+span of no length, or one ending before it starts, answers the centre in force at `to`. The answer
+depends on nothing but the stored history and the two arguments; it never depends on the block.
+
+The following formula reads `centreOver(lastAccrual, now)` for the market that asks it, so a market
+untouched for a week during which the centre rose is charged the old centre for the time before the
+rise and the new one from the block of the rise. See "The following formula" below.
+
 ## Reading the record
 
 | Function              | Answer                                                                          |
 | --------------------- | ------------------------------------------------------------------------------- |
 | `centre()`            | The stored centre. Never reverts; never depends on the clock.                   |
+| `centreOver(from, to)` | The mean of the centre over the span, weighted by time, from the checkpoints of its changes; the centre in force at `to` for a span of no length. Depends only on the history and its arguments. |
 | `leaders()`           | The three leaders' indexes, in rank order, from the last accepted reading.      |
 | `lastAsOf()`          | `asOf` of the last accepted reading; zero before any.                           |
 | `readingCount()`      | How many readings have been accepted.                                           |
@@ -169,7 +191,7 @@ and still holds it; at hour 50 the window is hours 26 to 50 and the average is 5
 
 ## The following formula
 
-`FollowingRateFormula` reads the record's centre `c` (lowered to its ceiling, the record's `maxRate` read
+`FollowingRateFormula` takes the record's centre `c` (lowered to its ceiling, the record's `maxRate` read
 once at creation, if ever above it) and answers, with `u` the utilisation and every figure scaled by 1e18:
 
 - for `u` at or below the target: `rate = c × (floorFraction + (1e18 − floorFraction) × u / target) / 1e18`
@@ -178,6 +200,15 @@ once at creation, if ever above it) and answers, with `u` the utilisation and ev
 So the rate at the target is exactly the centre, at zero utilisation the centre times the floor fraction,
 at full utilisation the centre times one plus the full multiple; it rises with utilisation everywhere,
 and the slope above the target is strictly steeper than below it. `ratePerSecond` never reverts.
+
+Which centre `c` is: the formula asks its caller for `lastAccrual()`, which every market answers, by a
+static call that changes nothing. When the caller answers with a time before the block, `c` is the
+record's `centreOver(lastAccrual, now)`, the mean of the centre over the time the market is about to
+charge; a reading delivered while the market was untouched thus prices only the time after its
+delivery. When the caller does not answer, answers with the wrong width, or answers with a time not
+before the block, `c` is the record's `centre()` as it stands. The rate is linear in `c`, so the rate at
+the mean centre is exactly the mean of the rates the parts of the span would have been charged on their
+own.
 
 | Figure              | Rule                                                       | Kind                                                   |
 | ------------------- | ---------------------------------------------------------- | ------------------------------------------------------ |

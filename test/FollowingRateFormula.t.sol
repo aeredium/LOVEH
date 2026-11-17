@@ -6,6 +6,32 @@ import {FollowingRateFormula} from "../src/rates/FollowingRateFormula.sol";
 import {Utilisation} from "../src/rates/Utilisation.sol";
 import {MockRateRecord} from "./mocks/MockRateRecord.sol";
 
+/// @notice A caller that answers `lastAccrual()` as a market does, so that the formula is asked
+///         from a contract with a last accrual of the test's choosing.
+contract AccruingCaller {
+    uint256 public lastAccrual;
+
+    function accrueAt(uint256 t) external {
+        lastAccrual = t;
+    }
+
+    function rate(FollowingRateFormula formula, uint256 loans, uint256 deposits) external view returns (uint256) {
+        return formula.ratePerSecond(loans, deposits);
+    }
+}
+
+/// @notice A caller whose `lastAccrual()` answers with the wrong width, which the formula must treat
+///         as no answer.
+contract OddCaller {
+    function lastAccrual() external pure returns (uint256, uint256) {
+        return (0, 0);
+    }
+
+    function rate(FollowingRateFormula formula, uint256 loans, uint256 deposits) external view returns (uint256) {
+        return formula.ratePerSecond(loans, deposits);
+    }
+}
+
 contract FollowingRateFormulaTest is RateRecordBase {
     uint256 internal constant TARGET = 0.8e18;
     uint256 internal constant FLOOR = 0.5e18;
@@ -209,5 +235,70 @@ contract FollowingRateFormulaTest is RateRecordBase {
             _expected(MAX_RATE, Utilisation.compute(half, type(uint256).max))
         );
         assertApproxEqAbs(formula.ratePerSecond(half, type(uint256).max), _expected(MAX_RATE, 0.5e18), 1);
+    }
+
+    // ------------------------------------------------------------------ the centre over the caller's span
+
+    /// @dev A reading delivered while a market is idle moves the centre from the block of its
+    ///      delivery: a caller that answers `lastAccrual()` as a market does is charged the mean of
+    ///      the centre over the time since, not the centre as it stands.
+    function test_centre_isAveragedSinceTheCallersLastAccrual() public {
+        AccruingCaller caller = new AccruingCaller();
+        caller.accrueAt(T0);
+        // The centre moves from R to 3R at T0 + 24 hours, the block of the second reading's delivery.
+        _setCentre(3 * R);
+        assertEq(block.timestamp, T0 + 24 hours);
+        vm.warp(T0 + 48 hours);
+        assertEq(formula.ratePerSecond(80, 100), 3 * R, "asked without a last accrual: the centre as it stands");
+        assertEq(caller.rate(formula, 80, 100), 2 * R, "a day at R and a day at 3R: the mean");
+        assertEq(caller.rate(formula, 0, 100), 2 * R * FLOOR / WAD);
+        assertEq(caller.rate(formula, 100, 100), 2 * R * (WAD + FULL) / WAD);
+        assertEq(caller.rate(formula, 90, 100), _expected(2 * R, 0.9e18));
+        assertEq(caller.rate(formula, 40, 100), _expected(2 * R, 0.4e18));
+        // Accrued at the step itself, or after it: the new centre alone.
+        caller.accrueAt(T0 + 24 hours);
+        assertEq(caller.rate(formula, 80, 100), 3 * R);
+        caller.accrueAt(T0 + 36 hours);
+        assertEq(caller.rate(formula, 80, 100), 3 * R);
+        // Accrued before the step: the mean, weighted by time.
+        caller.accrueAt(T0 + 12 hours);
+        assertEq(caller.rate(formula, 80, 100), (12 hours * R + 24 hours * 3 * R) / 36 hours);
+        // Accrued in this block, or at a time not yet reached: the centre as it stands.
+        caller.accrueAt(T0 + 48 hours);
+        assertEq(caller.rate(formula, 80, 100), 3 * R);
+        caller.accrueAt(T0 + 100 days);
+        assertEq(caller.rate(formula, 80, 100), 3 * R);
+        // Accrued before the record was made: time before its creation is not counted.
+        caller.accrueAt(T0 - 10 days);
+        assertEq(caller.rate(formula, 80, 100), 2 * R);
+    }
+
+    /// @dev A caller that does not answer `lastAccrual()`, or answers it with the wrong width, is
+    ///      charged the centre as it stands, and nothing reverts.
+    function test_centre_asItStandsWhenTheCallerDoesNotAnswer() public {
+        _setCentre(3 * R);
+        vm.warp(T0 + 48 hours);
+        vm.prank(stranger);
+        assertEq(formula.ratePerSecond(80, 100), 3 * R, "an account without code");
+        OddCaller odd = new OddCaller();
+        assertEq(odd.rate(formula, 80, 100), 3 * R, "an answer of the wrong width");
+        assertEq(formula.ratePerSecond(80, 100), 3 * R, "a contract without the function");
+    }
+
+    /// @dev The rate is linear in the centre, so charging the mean centre over a span charges exactly
+    ///      the mean of the rates the span's parts would have been charged on their own.
+    function testFuzz_meanCentreGivesMeanRate(uint256 c2, uint256 loans, uint256 deposits, uint256 split) public {
+        c2 = bound(c2, 1, MAX_RATE);
+        deposits = bound(deposits, 1, 1e40);
+        loans = bound(loans, 0, deposits);
+        split = bound(split, 1, 24 hours - 1);
+        AccruingCaller caller = new AccruingCaller();
+        _setCentre(c2);
+        uint256 stepAt = block.timestamp;
+        caller.accrueAt(stepAt - split);
+        vm.warp(stepAt + 1 hours);
+        uint256 meanCentre = record.centreOver(stepAt - split, stepAt + 1 hours);
+        assertEq(meanCentre, (split * INITIAL_CENTRE + 1 hours * c2) / (split + 1 hours));
+        assertEq(caller.rate(formula, loans, deposits), _expected(meanCentre, Utilisation.compute(loans, deposits)));
     }
 }

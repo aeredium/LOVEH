@@ -8,6 +8,7 @@ import {MarketFactory} from "../src/MarketFactory.sol";
 import {FollowingRateFormula} from "../src/rates/FollowingRateFormula.sol";
 import {KinkedRateFormula} from "../src/rates/KinkedRateFormula.sol";
 import {RateRecord} from "../src/rates/RateRecord.sol";
+import {Utilisation} from "../src/rates/Utilisation.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockPriceSource} from "./mocks/MockPriceSource.sol";
 
@@ -208,5 +209,80 @@ contract Loveh2MarketTest is RateRecordBase {
         // virtual offset's rounding (a few thousand wei on a thousand coins).
         assertApproxEqAbs(market.depositOf(lender), 1000e18 + I - I / 10, 1e6);
         assertLe(market.depositOf(lender), 1000e18 + I - I / 10);
+    }
+
+    // ------------------------------------------------------------------ a reading while the market is idle
+
+    /// @dev The formula's shape at centre `c` and utilisation `u`, as the formula writes it.
+    function _shape(uint256 c, uint256 u) internal pure returns (uint256) {
+        if (u <= TARGET) return c * (FLOOR + (WAD - FLOOR) * u / TARGET) / WAD;
+        return c + c * FULL * (u - TARGET) / (WAD - TARGET) / WAD;
+    }
+
+    /// @dev A reading delivered while the market is untouched moves the centre from the block of its
+    ///      delivery. The idle time before it is charged at the centre that was in force then, not at
+    ///      the new one: nobody re-prices time that has already passed by delivering a reading.
+    function test_readingDeliveredWhileIdle_pricesOnlyTheTimeAfterIt() public {
+        _fund(loan, lender, 1000e18);
+        vm.prank(lender);
+        market.deposit(1000e18, lender);
+        _fund(coll, borrower, 1e18);
+        vm.prank(borrower);
+        market.depositCollateral(1e18, borrower);
+        vm.prank(borrower);
+        market.borrow(800e18, borrower);
+        assertEq(market.lastAccrual(), T0);
+
+        // Ten idle days at the initial centre, then the signer's readings more than double the rates:
+        // the first names the leaders, the second, a day later, moves the centre to 12 percent.
+        skip(10 days);
+        _submitAt(block.timestamp, _uniform(R12));
+        skip(24 hours);
+        _submitAt(block.timestamp, _uniform(R12));
+        assertEq(record.centre(), R12);
+        assertEq(formula.ratePerSecond(800e18, 1000e18), R12, "asked without a last accrual: the new centre");
+        assertEq(market.lastAccrual(), T0, "untouched throughout");
+
+        // The eleven idle days are charged at 5 percent, the centre in force over all of them.
+        uint256 atOldCentre = 800e18 * (R5 * 11 days) / WAD;
+        uint256 atNewCentre = 800e18 * (R12 * 11 days) / WAD;
+        assertEq(market.loans(), 800e18 + atOldCentre, "the view already prices the idle time at the old centre");
+        vm.prank(stranger);
+        market.accrue();
+        assertEq(market.totalInterest(), atOldCentre, "eleven days at the old centre");
+        assertLt(market.totalInterest(), atNewCentre / 2, "not re-priced at the new one");
+        assertEq(market.lastAccrual(), block.timestamp);
+
+        // From the delivery on, the new centre is charged.
+        uint256 loansBefore = market.loans();
+        uint256 rate = formula.ratePerSecond(market.loans(), market.deposits());
+        assertEq(rate, _shape(R12, Utilisation.compute(market.loans(), market.deposits())));
+        assertGt(rate, R12, "utilisation is now a little above the target");
+        skip(5 days);
+        market.accrue();
+        assertEq(
+            market.totalInterest(), atOldCentre + loansBefore * (rate * 5 days) / WAD, "five days at the new centre"
+        );
+
+        // A span across a change of the centre: four days at 12 percent, then the readings step the
+        // rates down to 5 percent, and two more days at that. The span is charged at the mean.
+        uint256 from = block.timestamp;
+        loansBefore = market.loans();
+        uint256 depositsBefore = market.deposits();
+        skip(3 days);
+        _submitAt(block.timestamp, _uniform(R5));
+        skip(24 hours);
+        _submitAt(block.timestamp, _uniform(R5));
+        assertEq(record.centre(), R5);
+        skip(2 days);
+        uint256 mean = record.centreOver(from, block.timestamp);
+        assertEq(mean, (4 days * R12 + 2 days * R5) / 6 days);
+        uint256 meanRate = _shape(mean, Utilisation.compute(loansBefore, depositsBefore));
+        uint256 interestBefore = market.totalInterest();
+        market.accrue();
+        assertEq(
+            market.totalInterest() - interestBefore, loansBefore * (meanRate * 6 days) / WAD, "six days at the mean"
+        );
+        assertEq(market.unlent() + market.loans(), market.deposits() + market.feeOwed(), "identity");
     }
 }

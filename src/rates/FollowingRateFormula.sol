@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Shield-1.0.0
 pragma solidity 0.8.28;
 
+import {IMarket} from "../../interfaces/IMarket.sol";
 import {IRateFormula} from "../../interfaces/IRateFormula.sol";
 import {RateRecord} from "./RateRecord.sol";
 import {Utilisation} from "./Utilisation.sol";
@@ -14,6 +15,14 @@ import {Utilisation} from "./Utilisation.sol";
 ///         fraction, at full utilisation the centre times one plus the full multiple; it rises with
 ///         utilisation everywhere and the slope above the target is strictly steeper than below it.
 ///         Every parameter is fixed at deployment. `ratePerSecond` never reverts.
+///
+/// Which centre. A market charges the whole time since its last accrual at the one rate this formula
+/// answers when it is touched, and a reading delivered in between moves the record's centre. So that
+/// such a reading prices only the time after its delivery, `c` is the record's centre averaged over
+/// the time since the caller's last accrual: the formula asks its caller for `lastAccrual()`, which
+/// every market answers, and reads `centreOver(lastAccrual, now)` from the record. When the caller
+/// does not answer, or its last accrual is not before this block, `c` is the centre as it stands.
+/// The rate is linear in `c`, so the rate at the mean centre is the mean of the rates over the span.
 contract FollowingRateFormula is IRateFormula {
     error ZeroRecord();
     error InvalidTarget();
@@ -63,11 +72,27 @@ contract FollowingRateFormula is IRateFormula {
     /// @inheritdoc IRateFormula
     function ratePerSecond(uint256 loans, uint256 deposits) external view returns (uint256) {
         uint256 u = Utilisation.compute(loans, deposits);
-        uint256 c = RateRecord(record).centre();
+        uint256 c = _centre();
         if (c > ceiling) c = ceiling;
         if (u <= targetUtilisation) {
             return c * (floorFraction + (WAD - floorFraction) * u / targetUtilisation) / WAD;
         }
         return c + c * fullMultiple * (u - targetUtilisation) / (WAD - targetUtilisation) / WAD;
+    }
+
+    /// @dev The centre the caller is charged: the record's centre averaged over the time since the
+    ///      caller's last accrual when the caller answers `lastAccrual()` with a time before this
+    ///      block, and the centre as it stands otherwise. The ask is a static call that changes
+    ///      nothing, and a caller that does not answer it is not a fault.
+    function _centre() internal view returns (uint256) {
+        (bool answered, bytes memory data) = msg.sender.staticcall(abi.encodeCall(IMarket.lastAccrual, ()));
+        if (answered && data.length == 32) {
+            uint256 from = abi.decode(data, (uint256));
+            // The clock is the chain's: the span ends at this block.
+            // forge-lint: disable-next-line(block-timestamp)
+            uint256 to = block.timestamp;
+            if (from < to) return RateRecord(record).centreOver(from, to);
+        }
+        return RateRecord(record).centre();
     }
 }

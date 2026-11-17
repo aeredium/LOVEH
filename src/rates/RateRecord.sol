@@ -23,8 +23,16 @@ import {IRateRecord} from "../../interfaces/IRateRecord.sol";
 /// ending at a reading is the difference of the running sums at the window's two ends divided by its
 /// length; the sum at the window's start is interpolated from the latest reading at or before it.
 ///
+/// The centre over time. A reading is delivered at some block, and from that block on the markets
+/// are charged at the centre it stored. So that a reading prices only the time after its delivery,
+/// the record keeps a checkpoint for every change of the centre: the block's time, the centre from
+/// then on, and the integral of the centre over time up to then. `centreOver(from, to)` answers the
+/// mean of the centre over any span from those checkpoints, and the following formula charges a
+/// market at the mean over the time since the market's last accrual.
+///
 /// Widths. `asOf` is a uint64 and every rate is at most `maxRate`, which is below 2^192, so a running
-/// sum is below 2^192 * 2^64 = 2^256 over any span of time: no sum can overflow.
+/// sum is below 2^192 * 2^64 = 2^256 over any span of time: no sum can overflow. The centre is at most
+/// `maxRate` too, so the integral of the centre is below 2^256 up to any time a uint64 can name.
 contract RateRecord is IRateRecord, EIP712 {
     // ------------------------------------------------------------------ constants
 
@@ -75,6 +83,14 @@ contract RateRecord is IRateRecord, EIP712 {
         uint256 generation;
     }
 
+    /// @dev One change of the centre: the block's time at which it took effect, the centre from then
+    ///      on, and the integral of the centre over time from the record's creation up to `at`.
+    struct Checkpoint {
+        uint64 at;
+        uint192 centre;
+        uint256 integral;
+    }
+
     /// @inheritdoc IRateRecord
     address public signer;
     /// @inheritdoc IRateRecord
@@ -90,6 +106,8 @@ contract RateRecord is IRateRecord, EIP712 {
     mapping(bytes32 id => bool) internal _used;
     mapping(bytes32 id => Handover) internal _handovers;
     uint256 internal _executedHandovers;
+    /// @dev Every change of the centre in order of time, the first being the record's creation.
+    Checkpoint[] internal _checkpoints;
 
     // ------------------------------------------------------------------ construction
 
@@ -112,6 +130,7 @@ contract RateRecord is IRateRecord, EIP712 {
         initialCentre = initialCentre_;
         signer = signer_;
         centre = initialCentre_;
+        _checkpoint(initialCentre_);
     }
 
     // ------------------------------------------------------------------ readings
@@ -150,8 +169,16 @@ contract RateRecord is IRateRecord, EIP712 {
         _leaders = top;
         lastAsOf = r.asOf;
         readingCount = count + 1;
-        // The first reading has no span to average over: the centre stays what it is.
-        if (count != 0) centre = _centreAt(count, top);
+        // The first reading has no span to average over: the centre stays what it is. A centre that
+        // moves takes effect from this block, and is checkpointed so that the time before it stays
+        // priced at the centre that was in force.
+        if (count != 0) {
+            uint256 moved = _centreAt(count, top);
+            if (moved != centre) {
+                centre = moved;
+                _checkpoint(moved);
+            }
+        }
         emit ReadingAccepted(r.id, r.asOf, top, centre);
     }
 
@@ -217,6 +244,18 @@ contract RateRecord is IRateRecord, EIP712 {
         return _candidates;
     }
 
+    /// @notice The mean of the centre over the span from `from` to `to`, weighted by time, from the
+    ///         record's checkpoints: each centre counts from the block in which the reading that stored
+    ///         it was delivered until the next change. Time before the record's creation is not
+    ///         counted; a span of no length answers the centre in force at `to`. Depends on nothing but
+    ///         the stored history and its arguments, and never reverts for a `to` a uint64 can name.
+    function centreOver(uint256 from, uint256 to) external view returns (uint256) {
+        uint256 first = _checkpoints[0].at;
+        if (from < first) from = first;
+        if (to <= from) return _checkpoints[_checkpointAt(to)].centre;
+        return (_integralAt(to) - _integralAt(from)) / (to - from);
+    }
+
     /// @inheritdoc IRateRecord
     function readingAt(uint256 position)
         external
@@ -259,6 +298,48 @@ contract RateRecord is IRateRecord, EIP712 {
             taken[best] = true;
             top[j] = best;
         }
+    }
+
+    /// @dev Record that the centre is `newCentre` from this block on, with the integral of the centre
+    ///      up to this block carried forward from the last checkpoint (zero at creation).
+    function _checkpoint(uint256 newCentre) internal {
+        // The clock is the chain's: a centre takes effect from the block that stores it.
+        // forge-lint: disable-next-line(block-timestamp)
+        uint256 at = block.timestamp;
+        uint256 integral = 0;
+        uint256 n = _checkpoints.length;
+        if (n != 0) {
+            Checkpoint storage last = _checkpoints[n - 1];
+            integral = last.integral + uint256(last.centre) * (at - last.at);
+        }
+        // casting to 'uint64' is safe because the chain's time fits the width `asOf` has; casting to
+        // 'uint192' is safe because the centre is at most `maxRate`, which is below 2^192
+        // forge-lint: disable-next-line(unsafe-typecast)
+        _checkpoints.push(Checkpoint({at: uint64(at), centre: uint192(newCentre), integral: integral}));
+    }
+
+    /// @dev The index of the latest checkpoint at or before `t`, or 0 if `t` is before the first.
+    function _checkpointAt(uint256 t) internal view returns (uint256) {
+        uint256 lo = 0;
+        uint256 hi = _checkpoints.length - 1;
+        while (lo < hi) {
+            uint256 mid = (lo + hi + 1) / 2;
+            if (_checkpoints[mid].at <= t) {
+                lo = mid;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        return lo;
+    }
+
+    /// @dev The integral of the centre over time from the record's creation to `t`: the integral at
+    ///      the latest checkpoint at or before `t`, plus that checkpoint's centre over the time since.
+    ///      For a `t` before the first checkpoint, the integral at the first, which is zero.
+    function _integralAt(uint256 t) internal view returns (uint256) {
+        Checkpoint storage c = _checkpoints[_checkpointAt(t)];
+        if (t <= c.at) return c.integral;
+        return c.integral + uint256(c.centre) * (t - c.at);
     }
 
     /// @dev The centre at reading `n` (already stored, `n >= 1`): the sum of the leaders' averages

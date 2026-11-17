@@ -563,6 +563,120 @@ contract RateRecordTest is RateRecordBase {
         }
     }
 
+    // ------------------------------------------------------------------ the centre over time
+
+    /// @dev The time-weighted mean of the centre over a span, from a full list of the changes the
+    ///      test kept: `centres[i]` is in force from `times[i]` until `times[i + 1]`, the last for
+    ///      ever; time before `times[0]` is not counted.
+    function _referenceCentreOver(
+        uint256[] memory times,
+        uint256[] memory centres,
+        uint256 count,
+        uint256 from,
+        uint256 to
+    ) internal pure returns (uint256) {
+        if (from < times[0]) from = times[0];
+        if (to <= from) {
+            uint256 k = 0;
+            while (k + 1 < count && times[k + 1] <= to) {
+                ++k;
+            }
+            return centres[k];
+        }
+        uint256 area;
+        for (uint256 i = 0; i < count; ++i) {
+            uint256 start = times[i] > from ? times[i] : from;
+            uint256 end = i + 1 < count && times[i + 1] < to ? times[i + 1] : to;
+            if (end > start) area += centres[i] * (end - start);
+        }
+        return area / (to - from);
+    }
+
+    function test_centreOver_beforeAnyReadingIsTheInitialCentre() public view {
+        assertEq(record.centreOver(T0, T0 + 1 days), INITIAL_CENTRE);
+        assertEq(record.centreOver(T0, T0), INITIAL_CENTRE, "a span of no length");
+        assertEq(record.centreOver(T0 + 5, T0 + 1), INITIAL_CENTRE, "a span ending before it starts");
+        assertEq(record.centreOver(0, T0 - 1), INITIAL_CENTRE, "before the record was made");
+        assertEq(record.centreOver(T0 - 1 days, T0 + 1 days), INITIAL_CENTRE, "time before creation is not counted");
+    }
+
+    /// @dev A step of the centre counts from the block that stored it: the time before is at the
+    ///      old centre, the time after at the new, and a span across it at the time-weighted mean.
+    function test_centreOver_stepCountsFromItsDelivery() public {
+        _hourly(0, 24, _uniform(2 * R));
+        // The centre moved from R to 2R at the second reading, delivered at T0 + 1 hour.
+        assertEq(record.centre(), 2 * R);
+        assertEq(record.centreOver(T0, T0 + HOUR), R, "the hour before the step");
+        assertEq(record.centreOver(T0 + HOUR, T0 + 24 * HOUR), 2 * R, "after the step");
+        assertEq(record.centreOver(T0, T0 + 2 * HOUR), (R + 2 * R) / 2, "across the step");
+        assertEq(record.centreOver(T0, T0 + 4 * HOUR), (R + 3 * 2 * R) / 4);
+        assertEq(record.centreOver(T0 + HOUR - 1, T0 + HOUR), R, "the last second before the step");
+        assertEq(record.centreOver(T0 + HOUR, T0 + HOUR + 1), 2 * R, "the first second from the step");
+        assertEq(record.centreOver(T0 + 1 days, T0 + 10 days), 2 * R, "the last centre counts for ever");
+        assertEq(record.centreOver(T0 - 1 days, T0 + 2 * HOUR), (R + 2 * R) / 2, "creation clamps the start");
+        assertEq(record.centreOver(T0 + 5 * HOUR, T0 + HOUR), 2 * R, "no length: the centre in force at the end");
+        assertEq(record.centreOver(T0 + 5 * HOUR, T0 + HOUR - 1), R);
+    }
+
+    /// @dev What counts is the block in which the reading was delivered, not its `asOf`: a reading
+    ///      dated earlier than the block moves the centre from the block on.
+    function test_centreOver_countsFromDeliveryNotFromAsOf() public {
+        _submitAt(T0, _uniform(2 * R));
+        vm.warp(T0 + 2 * HOUR);
+        _submit(_reading(T0 + HOUR + 30 minutes, _descendingDeposits(), _uniform(2 * R)));
+        assertEq(record.centre(), 2 * R);
+        assertEq(record.centreOver(T0, T0 + 2 * HOUR), R, "nothing moved before the delivery");
+        assertEq(record.centreOver(T0 + 2 * HOUR, T0 + 3 * HOUR), 2 * R);
+        assertEq(record.centreOver(T0 + HOUR + 30 minutes, T0 + 2 * HOUR), R, "not from asOf");
+    }
+
+    /// @dev A reading that leaves the centre unchanged makes no checkpoint, and a reading that moves
+    ///      it makes one; over a long wandering history of more changes than the ring keeps, every
+    ///      span agrees with a reference kept in full by the test.
+    function test_centreOver_manyChangesAgainstReference() public {
+        uint256 total = 3 * 64 + 7;
+        uint256[] memory times = new uint256[](total + 1);
+        uint256[] memory centres = new uint256[](total + 1);
+        times[0] = T0;
+        centres[0] = INITIAL_CENTRE;
+        uint256 changes = 1;
+        for (uint256 n = 0; n < total; ++n) {
+            uint256[10] memory rates = _uniform(R);
+            rates[0] = R + (n * 7 % 23) * (R / 20);
+            rates[1] = (n % 9 < 3) ? 3 * R : R;
+            rates[2] = (n % 5 == 0) ? MAX_RATE : R / 2;
+            uint256 before = record.centre();
+            _submitAt(T0 + n * 30 minutes, rates);
+            if (record.centre() != before) {
+                times[changes] = block.timestamp;
+                centres[changes] = record.centre();
+                ++changes;
+            }
+        }
+        assertGt(changes, 64, "more changes than the ring of readings keeps");
+        uint256 last = T0 + (total - 1) * 30 minutes;
+        for (uint256 k = 0; k < 40; ++k) {
+            uint256 from = T0 - 1 hours + (uint256(keccak256(abi.encode("from", k))) % (last + 2 hours - T0));
+            uint256 to = T0 - 1 hours + (uint256(keccak256(abi.encode("to", k))) % (last + 2 hours - T0));
+            assertEq(
+                record.centreOver(from, to),
+                _referenceCentreOver(times, centres, changes, from, to),
+                string.concat("span ", vm.toString(k))
+            );
+        }
+        // The spans the formula asks for: from any past change to the present.
+        for (uint256 i = 0; i < changes; i += 7) {
+            assertEq(record.centreOver(times[i], last), _referenceCentreOver(times, centres, changes, times[i], last));
+            assertEq(
+                record.centreOver(times[i] - 1, last), _referenceCentreOver(times, centres, changes, times[i] - 1, last)
+            );
+        }
+        assertEq(record.centreOver(last, last), record.centre());
+        assertEq(
+            record.centreOver(0, last + 1 days), _referenceCentreOver(times, centres, changes, 0, last + 1 days)
+        );
+    }
+
     // ------------------------------------------------------------------ widths
 
     /// @dev The widest rate held for a hundred years, and over the whole span a uint64 can name:
@@ -583,6 +697,14 @@ contract RateRecordTest is RateRecordBase {
         (,, sums) = record.readingAt(3);
         assertEq(sums[0], widest * (type(uint64).max - T0));
         assertLe(record.centre(), record.maxRate());
+        // The integral of the centre does not overflow either: the centre was 1 for the first century
+        // and the widest rate from then to the last second a uint64 can name.
+        assertEq(record.centreOver(T0 + 100 * YEAR, type(uint64).max), widest, "the widest centre, the widest span");
+        assertEq(record.centreOver(T0, T0 + 200 * YEAR), (100 * YEAR + widest * (100 * YEAR)) / (200 * YEAR));
+        assertEq(
+            record.centreOver(T0, type(uint64).max),
+            (100 * YEAR + widest * (type(uint64).max - T0 - 100 * YEAR)) / (type(uint64).max - T0)
+        );
     }
 
     // ------------------------------------------------------------------ digests (3.2)
