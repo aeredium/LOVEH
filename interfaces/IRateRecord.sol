@@ -44,6 +44,7 @@ interface IRateRecord {
     error Expired(uint256 deadline);
     error BadSignature();
     error FromTheFuture(uint64 asOf);
+    error Stale(uint64 asOf);
     error TooSoon(uint64 asOf, uint64 lastAsOf);
     error RateTooHigh(uint256 i, uint256 rate);
     error TooFewLeaders();
@@ -57,9 +58,9 @@ interface IRateRecord {
 
     /// @notice Accept a reading signed by the current signer. Refused, each with its own error, when
     ///         the deadline is past, the id was used before, the signature is not the signer's, `asOf`
-    ///         is after the block, `asOf` is less than 30 minutes after the last accepted reading, any
-    ///         rate is above the record's highest rate, or fewer than three candidates have deposits.
-    ///         A refused reading changes nothing.
+    ///         is after the block, `asOf` is more than an hour before the block, `asOf` is less than
+    ///         30 minutes after the last accepted reading, any rate is above the record's highest
+    ///         rate, or fewer than three candidates have deposits. A refused reading changes nothing.
     function submitReading(Reading calldata r, bytes calldata signature) external;
 
     /// @notice Queue a handover of the signer to `r.next`, signed by the current signer. It becomes

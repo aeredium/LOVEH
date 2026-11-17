@@ -23,28 +23,29 @@ contract Loveh2SurfaceTest is SurfaceTest {
         returns (string[] memory views, string[] memory actions)
     {
         if (_eq(contractName, "RateRecord")) {
-            views = new string[](19);
+            views = new string[](20);
             // the figures fixed forever
             views[0] = "CANDIDATES";
             views[1] = "LEADERS";
             views[2] = "WINDOW";
             views[3] = "MIN_INTERVAL";
-            views[4] = "HISTORY";
-            views[5] = "ROTATE_DELAY";
-            views[6] = "maxRate";
-            views[7] = "initialCentre";
-            views[8] = "candidates";
+            views[4] = "MAX_AGE";
+            views[5] = "HISTORY";
+            views[6] = "ROTATE_DELAY";
+            views[7] = "maxRate";
+            views[8] = "initialCentre";
+            views[9] = "candidates";
             // what the record answers
-            views[9] = "signer";
-            views[10] = "centre";
-            views[11] = "centreOver";
-            views[12] = "leaders";
-            views[13] = "lastAsOf";
-            views[14] = "readingCount";
-            views[15] = "readingAt";
-            views[16] = "readingDigest";
-            views[17] = "rotateDigest";
-            views[18] = "eip712Domain";
+            views[10] = "signer";
+            views[11] = "centre";
+            views[12] = "centreOver";
+            views[13] = "leaders";
+            views[14] = "lastAsOf";
+            views[15] = "readingCount";
+            views[16] = "readingAt";
+            views[17] = "readingDigest";
+            views[18] = "rotateDigest";
+            views[19] = "eip712Domain";
             actions = new string[](3);
             actions[0] = "submitReading";
             actions[1] = "submitRotate";

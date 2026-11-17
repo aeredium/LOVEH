@@ -44,6 +44,8 @@ contract RateRecord is IRateRecord, EIP712 {
     uint256 public constant WINDOW = 24 hours;
     /// @notice The least time between two accepted readings.
     uint256 public constant MIN_INTERVAL = 30 minutes;
+    /// @notice The greatest age of a reading at delivery: how long after its `asOf` it is still accepted.
+    uint256 public constant MAX_AGE = 1 hours;
     /// @notice The number of readings kept.
     uint256 public constant HISTORY = 64;
     /// @notice The delay between a handover's submission and its execution.
@@ -138,9 +140,13 @@ contract RateRecord is IRateRecord, EIP712 {
     /// @inheritdoc IRateRecord
     function submitReading(Reading calldata r, bytes calldata signature) external {
         _verify(r.id, r.deadline, readingDigest(r), signature);
-        // The clock is the chain's; a reading dated after it is refused by design.
+        // The clock is the chain's; a reading dated after it, or more than MAX_AGE before it, is
+        // refused by design: a reading cannot be held back and delivered when its moment suits, nor
+        // dated back into a silence to rewrite the window at once.
         // forge-lint: disable-next-line(block-timestamp)
-        if (r.asOf > block.timestamp) revert FromTheFuture(r.asOf);
+        uint256 now_ = block.timestamp;
+        if (r.asOf > now_) revert FromTheFuture(r.asOf);
+        if (r.asOf + MAX_AGE < now_) revert Stale(r.asOf);
         uint256 count = readingCount;
         uint64 last = lastAsOf;
         if (count != 0 && r.asOf < last + MIN_INTERVAL) revert TooSoon(r.asOf, last);

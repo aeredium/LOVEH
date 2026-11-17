@@ -456,6 +456,17 @@
   },
   {
     "type": "error",
+    "name": "Stale",
+    "inputs": [
+      {
+        "name": "asOf",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "TooFewLeaders",
     "inputs": []
   },

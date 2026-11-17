@@ -60,6 +60,7 @@ contract RateRecordTest is RateRecordBase {
         assertEq(record.LEADERS(), 3);
         assertEq(record.WINDOW(), 24 hours);
         assertEq(record.MIN_INTERVAL(), 30 minutes);
+        assertEq(record.MAX_AGE(), 1 hours);
         assertEq(record.HISTORY(), 64);
         assertEq(record.ROTATE_DELAY(), 72 hours);
         assertGt(record.HISTORY() * record.MIN_INTERVAL(), record.WINDOW(), "the ring must cover the window");
@@ -209,7 +210,7 @@ contract RateRecordTest is RateRecordBase {
 
     function test_refuses_tooSoon() public {
         _submitAt(T0, _uniform(R));
-        vm.warp(T0 + 1 hours);
+        vm.warp(T0 + 30 minutes);
         IRateRecord.Reading memory r = _reading(T0 + 30 minutes - 1, _descendingDeposits(), _uniform(R));
         bytes memory sig = _signReading(r, signerSeed);
         Snapshot memory before = _snapshot();
@@ -225,6 +226,56 @@ contract RateRecordTest is RateRecordBase {
         r.asOf = _u64(T0 + 30 minutes);
         _submit(r);
         assertEq(record.readingCount(), 2);
+    }
+
+    /// @dev A reading more than an hour old at delivery is refused whatever its deadline says: it
+    ///      cannot be held back and delivered when its moment suits. At exactly an hour it is accepted.
+    function test_refuses_stale() public {
+        _submitAt(T0, _uniform(R));
+        vm.warp(T0 + 3 hours);
+        IRateRecord.Reading memory r = _reading(T0 + 1 hours, _descendingDeposits(), _uniform(R));
+        r.deadline = T0 + 10 days;
+        bytes memory sig = _signReading(r, signerSeed);
+        Snapshot memory before = _snapshot();
+        vm.expectRevert(abi.encodeWithSelector(IRateRecord.Stale.selector, _u64(T0 + 1 hours)));
+        record.submitReading(r, sig);
+        r.asOf = _u64(T0 + 2 hours - 1);
+        sig = _signReading(r, signerSeed);
+        vm.expectRevert(abi.encodeWithSelector(IRateRecord.Stale.selector, _u64(T0 + 2 hours - 1)));
+        record.submitReading(r, sig);
+        _assertUnchanged(before);
+        // Exactly an hour old is accepted, under the same id: the refusals marked nothing.
+        r.asOf = _u64(T0 + 2 hours);
+        _submit(r);
+        assertEq(record.readingCount(), 2);
+        assertEq(record.lastAsOf(), T0 + 2 hours);
+    }
+
+    /// @dev A silence cannot be rewritten: readings dated back into it are refused, so whoever holds
+    ///      signed readings cannot fill the window at once. The silence counts at the last stated
+    ///      rates, and the next fresh readings move the centre an hour of the window at a time.
+    function test_stale_silenceCannotBeRewrittenByBackdatedReadings() public {
+        _hourly(0, 24, _uniform(R));
+        assertEq(record.centre(), R);
+        uint256 silentUntil = T0 + 24 * HOUR + 30 days;
+        vm.warp(silentUntil);
+        // Readings dated hourly back into the silence, all at the highest rate, delivered now: every
+        // one older than an hour is refused, so only the last gets in.
+        for (uint256 h = 24; h >= 1; --h) {
+            IRateRecord.Reading memory r =
+                _reading(silentUntil - h * HOUR, _descendingDeposits(), _uniform(MAX_RATE));
+            r.deadline = silentUntil + 1 hours;
+            bytes memory sig = _signReading(r, signerSeed);
+            if (h > 1) {
+                vm.expectRevert(abi.encodeWithSelector(IRateRecord.Stale.selector, _u64(silentUntil - h * HOUR)));
+            }
+            record.submitReading(r, sig);
+        }
+        assertEq(record.readingCount(), 26);
+        assertEq(record.centre(), R, "the silence counts at the last stated rate, not at a backdated one");
+        // A fresh reading an hour on: one hour of the window at the highest rate, twenty-three at R.
+        _submitAt(silentUntil, _uniform(MAX_RATE));
+        assertEq(record.centre(), (23 * R + MAX_RATE) / 24, "an hour of the window at a time");
     }
 
     function test_refuses_rateTooHigh() public {
@@ -286,6 +337,10 @@ contract RateRecordTest is RateRecordBase {
         record.submitReading(r, sig);
         sig = _signReading(r, signerSeed);
         vm.expectRevert(abi.encodeWithSelector(IRateRecord.FromTheFuture.selector, _u64(T0 + 2 hours)));
+        record.submitReading(r, sig);
+        r.asOf = _u64(T0 - 1);
+        sig = _signReading(r, signerSeed);
+        vm.expectRevert(abi.encodeWithSelector(IRateRecord.Stale.selector, _u64(T0 - 1)));
         record.submitReading(r, sig);
         r.asOf = _u64(T0 + 10 minutes);
         sig = _signReading(r, signerSeed);

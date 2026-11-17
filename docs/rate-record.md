@@ -33,7 +33,7 @@ Reading(bytes32 id,uint64 asOf,uint256[10] deposits,uint256[10] rates,uint256 de
 | `asOf`     | The moment the signer took the reading, as a Unix time.                                   |
 | `deposits` | For each of the ten candidates, in index order, the amount deposited in it. Used only to rank. |
 | `rates`    | For each candidate, its borrowing rate per second scaled by 1e18.                         |
-| `deadline` | The last Unix time at which the reading may be delivered.                                 |
+| `deadline` | The last Unix time at which the reading may be delivered. A deadline later than `asOf` plus one hour adds nothing, since the reading is stale by then (check 5 below). |
 
 A fixed array is encoded as EIP-712 prescribes: the hash of its ten members' encodings laid end to end.
 
@@ -67,10 +67,16 @@ Every instruction passes these three first, each refused with its own error:
 A reading then passes, in this order:
 
 4. `asOf` is not after the block's time: `FromTheFuture(asOf)`.
-5. If a reading was accepted before, `asOf` is at least 30 minutes after the last accepted `asOf`:
+5. `asOf` is not more than one hour (`MAX_AGE`) before the block's time: `Stale(asOf)`. At exactly an
+   hour old the reading is still accepted. So a reading is delivered within the hour of its `asOf` or
+   never, whatever its deadline says: it cannot be held back and delivered when its moment suits, nor
+   dated back into a silence so as to rewrite the window at once. Of two readings outstanding together,
+   delivering the later first still shuts the earlier out under check 6, but what can be shut out that
+   way is at most an hour of history, and a silence always counts at the last stated rates.
+6. If a reading was accepted before, `asOf` is at least 30 minutes after the last accepted `asOf`:
    `TooSoon(asOf, lastAsOf)`.
-6. Every rate is at most the record's highest rate: `RateTooHigh(index, rate)`.
-7. At least three candidates have deposits above zero: `TooFewLeaders()`.
+7. Every rate is at most the record's highest rate: `RateTooHigh(index, rate)`.
+8. At least three candidates have deposits above zero: `TooFewLeaders()`.
 
 A refused reading changes nothing at all: not the centre, not the leaders, not the history, not the id.
 
@@ -182,6 +188,7 @@ rise and the new one from the block of the rise. See "The following formula" bel
 | `LEADERS`        | 3                          | Constant                                                    |
 | `WINDOW`         | 24 hours                   | Constant                                                    |
 | `MIN_INTERVAL`   | 30 minutes                 | Constant                                                    |
+| `MAX_AGE`        | 1 hour                     | Constant; the greatest age of a reading at delivery          |
 | `HISTORY`        | 64 readings                | Constant; `HISTORY × MIN_INTERVAL` exceeds `WINDOW`, asserted at creation |
 | `ROTATE_DELAY`   | 72 hours                   | Constant                                                    |
 | `candidates`     | ten non-zero, distinct labels | Set at creation; refused with `BadConfig()` otherwise    |
