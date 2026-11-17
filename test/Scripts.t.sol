@@ -170,6 +170,41 @@ contract ScriptsTest is Test {
         assertTrue(factory.isMarket(second));
     }
 
+    /// @dev The trial script runs on a test network only: on the Foundry local chain (31337) and on
+    ///      the AEREDIUM test network (2237); on any other chain it reverts before deploying anything.
+    function test_deployTrialMarket_refusesEveryChainButTheTestNetworks() public {
+        (, bytes32[10] memory labels) = _candidateList();
+        RateRecord record = new RateRecord(labels, MAX_RATE, INITIAL_CENTRE, signer);
+        FollowingRateFormula formula = new FollowingRateFormula(address(record), 0.8e18, 0.5e18, 4e18);
+        address[] memory formulas = new address[](1);
+        formulas[0] = address(formula);
+        MarketFactory factory = new MarketFactory(feeRecipient, formulas);
+        vm.setEnv("LOVEH_FACTORY", vm.toString(address(factory)));
+        vm.setEnv("LOVEH_RATE_FORMULA", vm.toString(address(formula)));
+        vm.setEnv("LOVEH_BORROWING_LIMIT", vm.toString(uint256(0.86e18)));
+        DeployTrialMarket script = new DeployTrialMarket();
+        uint256 local = block.chainid;
+        assertEq(local, 31337, "the test chain is the Foundry local chain");
+
+        uint256[6] memory refused = [uint256(1), 10, 137, 2236, 2238, 31338];
+        for (uint256 i = 0; i < refused.length; ++i) {
+            vm.chainId(refused[i]);
+            vm.expectRevert(bytes("DeployTrialMarket runs on a test network only"));
+            script.run();
+            assertEq(factory.marketCount(), 0, "nothing deployed");
+        }
+
+        vm.chainId(2237);
+        (,,, address onTestNetwork) = script.run();
+        assertTrue(factory.isMarket(onTestNetwork));
+        assertEq(factory.marketCount(), 1);
+
+        vm.chainId(local);
+        (,,, address onLocal) = script.run();
+        assertTrue(factory.isMarket(onLocal));
+        assertEq(factory.marketCount(), 2);
+    }
+
     /// @dev The trial mocks are copies of the test mocks and behave as they do.
     function test_trialMocksBehaveLikeTheTestMocks() public {
         TrialCoin coin = new TrialCoin("Trial Coin", "TRIAL", 18);

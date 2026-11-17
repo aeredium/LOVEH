@@ -3,7 +3,7 @@ pragma solidity 0.8.28;
 
 // TEST NETWORK ONLY. This script deploys mock coins and a mock price source that anyone can mint or
 // move. It exists to try a LOVEH2 market on the test network and must never be run against a live
-// network.
+// network: `run()` reverts unless the chain id is one of the two test networks named below.
 
 import {Script, console2} from "forge-std/Script.sol";
 
@@ -22,14 +22,25 @@ import {TrialPriceSource} from "./trial/TrialPriceSource.sol";
 ///
 /// The trial coins have 18 decimals; the trial price is 2000e36, so one whole collateral coin is
 /// worth 2000 whole loan coins. These are test values, fixed here.
+///
+/// The script runs on a test network only: on any chain whose id is not one of the two named below it
+/// reverts before deploying anything. No main network's id is ever on the list.
 contract DeployTrialMarket is Script {
     uint8 internal constant TRIAL_DECIMALS = 18;
     uint256 internal constant TRIAL_PRICE = 2000e36;
+
+    /// @dev The Foundry local chain (anvil, and the chain `forge test` runs on).
+    uint256 internal constant FOUNDRY_LOCAL_CHAIN_ID = 31337;
+    /// @dev The AEREDIUM test network.
+    uint256 internal constant AEREDIUM_TEST_CHAIN_ID = 2237;
 
     function run()
         external
         returns (TrialCoin loanCoin, TrialCoin collateralCoin, TrialPriceSource priceSource, address market)
     {
+        if (block.chainid != FOUNDRY_LOCAL_CHAIN_ID && block.chainid != AEREDIUM_TEST_CHAIN_ID) {
+            revert("DeployTrialMarket runs on a test network only");
+        }
         address factory = _address("LOVEH_FACTORY");
         address rateFormula = _address("LOVEH_RATE_FORMULA");
         uint256 borrowingLimit = _uint("LOVEH_BORROWING_LIMIT");
