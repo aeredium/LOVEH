@@ -23,7 +23,10 @@ import {Utilisation} from "./Utilisation.sol";
 ///         with another width, however wide, or answers a figure no genuine record can answer is
 ///         charged as a stale record, at the resting centre, until it answers as a record again, and
 ///         costs the caller at most the allowance per read. A genuine `RateRecord` always answers,
-///         well within the allowance.
+///         well within the allowance. The one thing that fails `ratePerSecond` is its caller's want
+///         of gas: a read whose call failed with less than a sixty-third of the allowance left may
+///         have starved the record of its allowance, and fails rather than price a starved record at
+///         rest, as a call starved of gas fails anywhere.
 ///
 /// Which centre. A market charges the whole time since its last accrual at the one rate this formula
 /// answers when it is touched, and a reading delivered in between moves the record's centre. So that
@@ -158,7 +161,7 @@ contract FollowingRateFormula is IRateFormula {
     ///      nothing, and a caller that does not answer it is not a fault. The record is read by
     ///      guarded static calls too, each within `ASK_GAS`: a record that does not answer as a
     ///      record, in this block, is charged as a stale one, at the resting centre, and nothing
-    ///      reverts.
+    ///      reverts unless the caller starved a read of its allowance (see `_ask`).
     function _centre() internal view returns (uint256) {
         RateRecord r = RateRecord(record);
         // The clock is the chain's: the span ends at this block, and the record is stale once the
@@ -209,11 +212,25 @@ contract FollowingRateFormula is IRateFormula {
     ///      answer of another width is left where the record put it, whatever its size, so a record
     ///      that spends its allowance on the width of its answer cannot make the formula spend as
     ///      much again to copy it. Only the scratch space is written.
+    ///
+    ///      A call is given at most sixty-three sixty-fourths of the gas on hand, so a caller that
+    ///      enters with too little leaves the record less than its allowance, and a genuine record
+    ///      can then run out inside its answer. That is the caller's want of gas, not the record's
+    ///      silence, and it must not be priced at rest: when the call fails and less than a
+    ///      sixty-third of the allowance is left, the record may not have been given its whole
+    ///      allowance, and the read fails with it instead of answering. When a sixty-third or more is
+    ///      left, the record had its whole allowance, so what failed was the record, and it is charged
+    ///      as a stale one. A caller that gives the formula enough to pay the allowance in full is
+    ///      never failed this way, whatever the record does.
     function _ask(bytes memory data) internal view returns (bool answered, uint256 word) {
         address target = record;
         uint256 allowance = ASK_GAS;
         assembly ("memory-safe") {
             let ok := staticcall(allowance, target, add(data, 32), mload(data), 0, 0)
+            if iszero(ok) {
+                // Less than a sixty-third of the allowance left: the record may have been starved.
+                if lt(gas(), div(allowance, 63)) { revert(0, 0) }
+            }
             if and(ok, eq(returndatasize(), 32)) {
                 returndatacopy(0, 0, 32)
                 answered := 1

@@ -465,6 +465,62 @@ contract FollowingRateFormulaTest is RateRecordBase {
         );
     }
 
+    /// @dev Security reading finding 2 (seventh reading). A call is given at most sixty-three
+    ///      sixty-fourths of the gas on hand, so a caller that entered `ratePerSecond` with too little
+    ///      gas left the record less than its allowance, and a genuine, fresh record ran out inside
+    ///      `centreOver`. Before the fix `_ask` took that for a record that does not answer and priced
+    ///      it at the resting centre: the least gas at which the call answered at all gave the resting
+    ///      centre, and so did a band of gas above it. Now a read whose call failed with less than a
+    ///      sixty-third of the allowance left fails with it, so at every gas the formula either fails
+    ///      or answers the record's rate; a record that truly reverts, with any gas to spare, and one
+    ///      that burns its whole allowance are still charged at rest.
+    function test_aReadStarvedOfGasByTheCallerFailsInsteadOfPricingTheRecordAtRest() public {
+        // A genuine record with a history of changes, read over a span by a caller that answers
+        // `lastAccrual()`: the dearest read, `centreOver`, over several checkpoints.
+        _setCentre(3 * R);
+        uint256 lastAsOf = record.lastAsOf();
+        for (uint256 n = 1; n <= 8; ++n) {
+            _submitAt(lastAsOf + n * 1 hours, _uniform(n % 2 == 0 ? 3 * R : 2 * R));
+        }
+        AccruingCaller caller = new AccruingCaller();
+        caller.accrueAt(T0);
+        vm.warp(record.lastAsOf() + 1 hours);
+        uint256 expected = caller.rate(formula, 80, 100);
+        assertEq(expected, record.centreOver(T0, block.timestamp), "with gas enough: the record's mean centre");
+        assertTrue(expected != formula.restingCentre(), "told apart from the resting centre");
+
+        // Rising gas, 32 at a step, from far too little to 20,000 beyond the least that answers: at
+        // every step the formula fails or answers the record's rate, never the resting centre.
+        uint256 firstAnswer = 0;
+        uint256 answers = 0;
+        for (uint256 g = 20_000; g <= 400_000; g += 32) {
+            if (firstAnswer != 0 && g > firstAnswer + 20_000) break;
+            try caller.rate{gas: g}(formula, 80, 100) returns (uint256 rate) {
+                assertEq(rate, expected, "an answer is the record's rate, whatever the gas");
+                if (firstAnswer == 0) firstAnswer = g;
+                ++answers;
+            } catch {}
+        }
+        assertGt(firstAnswer, 0, "with gas enough the call answers");
+        assertGt(answers, 0);
+
+        // A record that truly reverts is charged at rest as before, by a caller with modest gas and
+        // with plenty: its call fails with far more than a sixty-third of the allowance left.
+        RecordThatChangesLater changing = new RecordThatChangesLater(MAX_RATE, 3 * R, R);
+        FollowingRateFormula f = new FollowingRateFormula(address(changing), TARGET, FLOOR, FULL);
+        changing.setMode(RecordThatChangesLater.Mode.Reverts);
+        assertEq(f.ratePerSecond{gas: 60_000}(80, 100), R, "a record that reverts, read with modest gas: at rest");
+        assertEq(f.ratePerSecond(80, 100), R, "and with plenty");
+        caller.accrueAt(T0 - 1 days);
+        assertEq(caller.rate{gas: 60_000}(f, 80, 100), R, "over the caller's span too");
+        // A record that burns its whole allowance, given it in full, is charged at rest as before;
+        // given less than it, the call is starved and fails rather than charge the resting centre.
+        changing.setMode(RecordThatChangesLater.Mode.Burns);
+        assertEq(f.ratePerSecond{gas: 1_000_000}(80, 100), R, "a record that burns its whole allowance: at rest");
+        vm.expectRevert();
+        f.ratePerSecond{gas: 100_000}(80, 100);
+    }
+
     // ------------------------------------------------------------------ shape (4, 8.13)
 
     function test_shape_beforeAnyReading() public view {

@@ -328,7 +328,8 @@ once at creation, if ever above it) and answers, with `u` the utilisation and ev
 
 So the rate at the target is exactly the centre, at zero utilisation the centre times the floor fraction,
 at full utilisation the centre times one plus the full multiple; it rises with utilisation everywhere,
-and the slope above the target is strictly steeper than below it. `ratePerSecond` never reverts. The
+and the slope above the target is strictly steeper than below it. `ratePerSecond` never reverts,
+whatever the record does; only a caller that starves it of gas fails it (below). The
 formula reads five things of its record, `maxRate`, `initialCentre`, `centre`, `lastAsOf` and
 `centreOver`, and its constructor asks each of them once and refuses, with `BadConfig()`, a record that
 does not answer every one with a single word; so a contract of another shape cannot be made the record.
@@ -354,6 +355,18 @@ step, so the allowance covers a history of more than 2^40 checkpoints, longer th
 at one every thirty minutes. The ceiling, too, is bounded by the formula itself, below 2^192 as a
 genuine record's `maxRate` is, so the pricing of a span across the moment of staleness cannot overflow
 whatever the record answers.
+
+What is not priced at rest is a read the caller starved. A call is given at most sixty-three
+sixty-fourths of the gas on hand, so a caller that enters `ratePerSecond` with too little gas leaves
+the record less than its allowance, and a genuine record can then run out inside `centreOver`. That is
+the caller's want of gas, not the record's silence, and it is not charged at the resting centre: when
+a read's call fails and less than a sixty-third of the allowance is left, the record may not have been
+given its whole allowance, and `ratePerSecond` fails with it, as a call starved of gas fails anywhere.
+When a sixty-third or more is left, the record had its whole allowance, so what failed was the record,
+and it is charged as a stale one. A caller that gives the formula enough to pay the allowance in full,
+some 203,200 gas at the read, is never failed this way, whatever the record does; a market's accrual
+gives it far more. `test_aReadStarvedOfGasByTheCallerFailsInsteadOfPricingTheRecordAtRest` in
+`test/FollowingRateFormula.t.sol` shows it.
 
 Which centre `c` is: the formula asks its caller for `lastAccrual()`, which every market answers, by a
 static call that changes nothing. When the caller answers with a time before the block, `c` is the
@@ -421,7 +434,7 @@ the two are the same figure.)
 | `ceiling`           | the record's `maxRate`, read once; above zero, below 2^192 | Set at creation; `BadConfig()` if zero or too wide     |
 | `restingCentre`     | the record's `initialCentre`, read once, lowered to the ceiling if above it | Set at creation; `BadConfig()` if zero |
 | `STALE_AFTER`       | 7 days; past it, by the last reading's `asOf`, the resting centre is charged; the record's `STALE_AFTER` must be the same | Constant |
-| `ASK_GAS`           | 200,000; the gas each read of the record is given after creation, and the most a record that burns gas or answers wide can cost the caller per read; an answer that is not one word is left uncopied | Constant, internal |
+| `ASK_GAS`           | 200,000; the gas each read of the record is given after creation, and the most a record that burns gas or answers wide can cost the caller per read; an answer that is not one word is left uncopied; a read whose call failed with less than a sixty-third of this left may have been starved by the caller, and fails rather than price the record at rest | Constant, internal |
 | `targetUtilisation` | strictly between 0 and 1e18                                | Set at creation; `InvalidTarget()`                     |
 | `floorFraction`     | below 1e18 (zero allowed: no rate at zero utilisation)     | Set at creation; `InvalidFloorFraction()`              |
 | `fullMultiple`      | above zero; steeper above than below; `ceiling × fullMultiple × 1e18` must fit in 256 bits | Set at creation; `ZeroMultiple()`, `SlopeAboveNotSteeper()`, `BadConfig()` |
