@@ -20,12 +20,35 @@ forge coverage
 
 Layout:
 
-- `src/` — `MarketFactory`, `Market`, `ReceiptToken`, the rate formulas under `src/rates/` (PolyForm Shield).
-- `interfaces/` — the Solidity interfaces, their JSON ABIs under `interfaces/abi/`, and usage examples (MIT).
+- `src/` — `MarketFactory`, `Market`, `ReceiptToken`, the rate formulas under `src/rates/` (PolyForm Shield):
+  the fixed `LinearRateFormula` and `KinkedRateFormula`, and for LOVEH2 the `RateRecord` and the
+  `FollowingRateFormula` that reads it.
+- `interfaces/` — the Solidity interfaces (`IMarketFactory`, `IMarket`, `IReceiptToken`, `IPriceSource`,
+  `IRateFormula`, `IRateRecord`), their JSON ABIs under `interfaces/abi/`, and usage examples (MIT).
+- `script/` — the Foundry deployment scripts: `DeployLoveh2.s.sol` (a rate record, a following formula and a
+  factory permitting only that formula) and, for the test network only, `DeployTrialMarket.s.sol` with its
+  trial coins and price source under `script/trial/`.
 - `test/` — the Foundry tests, with mock tokens (including fee-on-transfer and freezable tokens), a
-  mock price source, and the invariant handler under `test/invariant/`.
+  mock price source, a mock rate record, and the invariant handlers under `test/invariant/`.
+- `docs/` — `rate-record.md`, the rate record's instructions, checks and averaging rule.
 
 To regenerate the ABIs after a change: `forge inspect <Contract> abi --json > interfaces/abi/<Contract>.json`.
+
+## LOVEH1 and LOVEH2
+
+LOVEH markets come in two families, each with its own factory of the same `MarketFactory` code, and each
+factory names its own fee recipient.
+
+- **LOVEH1** uses rate formulas whose every figure is fixed forever on the day of deployment
+  (`LinearRateFormula`, `KinkedRateFormula`).
+- **LOVEH2** uses a rate formula of the same kinked shape whose level follows the borrowing rates of the
+  three largest lending protocols on other chains. Those rates are read off chain through two independent
+  doors, accepted only when both agree, signed by the AERKey threshold signer, and delivered to this chain
+  by anyone as a typed instruction. A small contract, the rate record, checks the signature, finds the
+  three leaders, and keeps the figure the `FollowingRateFormula` reads. See `docs/rate-record.md`.
+
+Nothing makes one family depend on the other: a LOVEH1 factory knows nothing of a rate record, and a
+LOVEH2 factory permits only its following formula.
 
 ## Licences
 
