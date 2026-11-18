@@ -84,14 +84,18 @@ contract RecordWithoutStaleAfter is RecordWithoutCentreOver {
 }
 
 /// @notice A record that answers as a record at creation and changes afterwards: it can be made to
-///         revert, to answer with the wrong width, or to answer a last reading no genuine record can
-///         name (security reading finding 2, fourth reading). `lastAsOf` is declared a word wide so
-///         that it can answer beyond a uint64; the selector is the same.
+///         revert, to answer with the wrong width, to answer a last reading no genuine record can
+///         name (security reading finding 2, fourth reading), to answer a block of zeros sized to
+///         spend most of the gas it is given, or to burn every unit of gas it is given and answer
+///         nothing (security reading finding 1, fifth reading). `lastAsOf` is declared a word wide
+///         so that it can answer beyond a uint64; the selector is the same.
 contract RecordThatChangesLater {
     enum Mode {
         Answers,
         Reverts,
-        WrongWidth
+        WrongWidth,
+        Oversized,
+        Burns
     }
 
     uint256 public maxRate;
@@ -142,7 +146,32 @@ contract RecordThatChangesLater {
                 return(0, 64)
             }
         }
+        if (mode == Mode.Oversized) {
+            // A block of zeros whose width alone costs nine tenths of the gas on hand: w words of
+            // memory cost 3w + w^2 / 512, so w = 256 (sqrt(9 + g / 128) - 3) words cost g. Whoever
+            // copies the answer pays about as much again.
+            uint256 w = 256 * (_sqrt(9 + gasleft() * 9 / 10 / 128) - 3);
+            assembly {
+                return(0, mul(w, 32))
+            }
+        }
+        if (mode == Mode.Burns) {
+            // Every unit of gas it was given, and no answer.
+            assembly {
+                for {} 1 {} {}
+            }
+        }
         return word;
+    }
+
+    function _sqrt(uint256 x) internal pure returns (uint256 y) {
+        if (x == 0) return 0;
+        uint256 z = (x + 1) / 2;
+        y = x;
+        while (z < y) {
+            y = z;
+            z = (x / z + z) / 2;
+        }
     }
 }
 
@@ -369,6 +398,71 @@ contract FollowingRateFormulaTest is RateRecordBase {
         caller.accrueAt(T0);
         vm.warp(T0 + 48 hours);
         assertEq(caller.rate(formula, 80, 100), 2 * R, "a day at R and a day at 3R, through the guarded calls");
+    }
+
+    /// @dev Security reading finding 1 (fifth reading). The guarded reads forwarded all their gas and
+    ///      copied the whole answer before comparing its width with one word, so a record that
+    ///      answered a block of zeros sized to spend most of the gas it was given left the formula
+    ///      with a sixty-fourth of it and about the same memory bill again: `ratePerSecond` ran out
+    ///      of gas, and every market on the formula with it. A record that merely burned its gas left
+    ///      the caller a sixty-fourth of what it supplied. Now each read is given `ASK_GAS` and no
+    ///      more, and nothing is copied until the answer is known to be one word: an answer of any
+    ///      other width, however wide, is no answer, and a record that burns its gas or spends it on
+    ///      width costs the caller the allowance per read and nothing else.
+    function test_aRecordThatAnswersWideOrBurnsItsGasDoesNotMakeTheFormulaRevert() public {
+        RecordThatChangesLater changing = new RecordThatChangesLater(MAX_RATE, 3 * R, R);
+        FollowingRateFormula f = new FollowingRateFormula(address(changing), TARGET, FLOOR, FULL);
+        AccruingCaller caller = new AccruingCaller();
+        caller.accrueAt(T0 - 1 days);
+        assertEq(f.ratePerSecond(80, 100), 3 * R, "the record answers: its centre");
+        assertEq(caller.rate(f, 80, 100), 3 * R);
+
+        // The record answers `lastAsOf()` with a block of zeros sized to its gas. Before the fix both
+        // of these ran out of gas while copying the answer; now the answer is not copied, and a
+        // record that does not answer with one word is at rest.
+        changing.setMode(RecordThatChangesLater.Mode.Oversized);
+        assertEq(f.ratePerSecond{gas: 1_000_000}(80, 100), R, "an oversized answer: the resting centre");
+        assertEq(caller.rate{gas: 1_000_000}(f, 80, 100), R, "over the caller's span too");
+        assertEq(f.ratePerSecond(80, 100), R, "with whatever gas the caller has");
+        assertEq(f.ratePerSecond(0, 100), R * FLOOR / WAD, "the shape is kept");
+        assertEq(f.ratePerSecond(100, 100), R * (WAD + FULL) / WAD);
+        assertEq(caller.rate(f, 40, 100), _expected(R, 0.4e18));
+
+        // The record burns every unit of gas it is given. Before the fix it was given all but a
+        // sixty-fourth of what the caller had; now it is given the allowance and no more, so a touch
+        // of a market costs the allowance over its usual price, not sixty-three times that price.
+        changing.setMode(RecordThatChangesLater.Mode.Burns);
+        uint256 before = gasleft();
+        uint256 rate = f.ratePerSecond{gas: 1_000_000}(80, 100);
+        uint256 spent = before - gasleft();
+        assertEq(rate, R, "a record that burns its gas: the resting centre");
+        assertGt(spent, 200_000, "the read's whole allowance was burnt");
+        assertLt(spent, 300_000, "and nothing beyond the allowance and the formula's own work");
+        before = gasleft();
+        assertEq(caller.rate{gas: 1_000_000}(f, 80, 100), R, "over the caller's span too");
+        spent = before - gasleft();
+        assertLt(spent, 300_000);
+        assertEq(f.ratePerSecond(100, 100), R * (WAD + FULL) / WAD, "the shape is kept");
+
+        // The record answers again: its centre is charged once more, and a genuine record is read
+        // within the allowance over a history of changes and a silence alike.
+        changing.setMode(RecordThatChangesLater.Mode.Answers);
+        assertEq(f.ratePerSecond(80, 100), 3 * R, "answering again: its centre");
+        assertEq(caller.rate(f, 80, 100), 3 * R);
+        _setCentre(3 * R);
+        uint256 lastAsOf = record.lastAsOf();
+        for (uint256 n = 1; n <= 20; ++n) {
+            _submitAt(lastAsOf + n * 1 hours, _uniform(n % 2 == 0 ? 3 * R : 2 * R));
+        }
+        caller.accrueAt(T0);
+        vm.warp(record.lastAsOf() + 10 days);
+        uint256 staleAt = record.lastAsOf() + 7 days;
+        uint256 meanBefore = record.centreOver(T0, staleAt);
+        assertEq(
+            caller.rate{gas: 1_000_000}(formula, 80, 100),
+            (meanBefore * (staleAt - T0) + R * 3 days) / (staleAt - T0 + 3 days),
+            "a genuine record with a history of changes, across the moment of staleness, within the allowance"
+        );
     }
 
     // ------------------------------------------------------------------ shape (4, 8.13)

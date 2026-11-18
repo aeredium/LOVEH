@@ -303,16 +303,23 @@ figure is not the formula's own: the record rests its history at that moment and
 open silence from it, and the two must agree.
 
 The check at creation is made once, and a contract that answered then may change afterwards: it may
-revert, lose its code, or answer otherwise than a record does. So `ratePerSecond` reads the record by
-guarded static calls, and treats a record that does not answer as a record, in the block of the call,
-as a stale one: an answer that is not exactly one word (a revert, an account without code, two words),
-or a `lastAsOf` wider than the uint64 a record stores, is charged at the resting centre, over the whole
-span, until the record answers as a record again; a `centreOver` or `centre` that does not answer is
-charged at the resting centre over its part of the span. The promise therefore holds over every record
-a formula can be created on, whatever the record does after creation; a genuine `RateRecord` always
-answers, and is read exactly as before. The ceiling, too, is bounded by the formula itself, below
-2^192 as a genuine record's `maxRate` is, so the pricing of a span across the moment of staleness
-cannot overflow whatever the record answers.
+revert, lose its code, burn gas, or answer otherwise than a record does. So `ratePerSecond` reads the
+record by guarded static calls, each given a fixed allowance of gas, `ASK_GAS` (200,000), and no more,
+and copying nothing of the answer until its width is known to be one word; and it treats a record
+that does not answer as a record, in the block of the call, as a stale one: an answer that is not
+exactly one word (a revert, an account without code, a record that runs out of its allowance, two
+words, or a block of a million zeros), or a `lastAsOf` wider than the uint64 a record stores, is
+charged at the resting centre, over the whole span, until the record answers as a record again; a
+`centreOver` or `centre` that does not answer is charged at the resting centre over its part of the
+span. A record that burns its allowance, or spends it on the width of its answer, costs the caller
+the allowance per read, two reads at the most, and nothing else: the formula never pays to copy what
+it will not read. The promise therefore holds over every record a formula can be created on, whatever
+the record does after creation; a genuine `RateRecord` always answers, and is read exactly as before:
+its dearest answer, `centreOver`, is two binary searches over its checkpoints at about 2,200 gas a
+step, so the allowance covers a history of more than 2^40 checkpoints, longer than sixty million years
+at one every thirty minutes. The ceiling, too, is bounded by the formula itself, below 2^192 as a
+genuine record's `maxRate` is, so the pricing of a span across the moment of staleness cannot overflow
+whatever the record answers.
 
 Which centre `c` is: the formula asks its caller for `lastAccrual()`, which every market answers, by a
 static call that changes nothing. When the caller answers with a time before the block, `c` is the
@@ -374,10 +381,11 @@ the two are the same figure.)
 
 | Figure              | Rule                                                       | Kind                                                   |
 | ------------------- | ---------------------------------------------------------- | ------------------------------------------------------ |
-| `record`            | not zero; answers `maxRate`, `initialCentre`, `centre`, `lastAsOf` and `centreOver`, each with one word, when asked at creation, and `STALE_AFTER` with the formula's own figure; read by guarded static calls afterwards, and charged as stale when it does not answer as a record | Set at creation; `ZeroRecord()`, `BadConfig()` |
+| `record`            | not zero; answers `maxRate`, `initialCentre`, `centre`, `lastAsOf` and `centreOver`, each with one word, when asked at creation, and `STALE_AFTER` with the formula's own figure; read by guarded static calls within `ASK_GAS` afterwards, and charged as stale when it does not answer as a record | Set at creation; `ZeroRecord()`, `BadConfig()` |
 | `ceiling`           | the record's `maxRate`, read once; above zero, below 2^192 | Set at creation; `BadConfig()` if zero or too wide     |
 | `restingCentre`     | the record's `initialCentre`, read once, lowered to the ceiling if above it | Set at creation; `BadConfig()` if zero |
 | `STALE_AFTER`       | 7 days; past it, by the last reading's `asOf`, the resting centre is charged; the record's `STALE_AFTER` must be the same | Constant |
+| `ASK_GAS`           | 200,000; the gas each read of the record is given after creation, and the most a record that burns gas or answers wide can cost the caller per read; an answer that is not one word is left uncopied | Constant, internal |
 | `targetUtilisation` | strictly between 0 and 1e18                                | Set at creation; `InvalidTarget()`                     |
 | `floorFraction`     | below 1e18 (zero allowed: no rate at zero utilisation)     | Set at creation; `InvalidFloorFraction()`              |
 | `fullMultiple`      | above zero; steeper above than below; `ceiling × fullMultiple × 1e18` must fit in 256 bits | Set at creation; `ZeroMultiple()`, `SlopeAboveNotSteeper()`, `BadConfig()` |

@@ -17,10 +17,13 @@ import {Utilisation} from "./Utilisation.sol";
 ///         Every parameter is fixed at deployment. `ratePerSecond` never reverts, whatever the record
 ///         does: the constructor asks the record, once, everything the formula will ever ask of it,
 ///         and refuses a record that does not answer, so no record of another shape can be followed;
-///         and afterwards the formula reads the record by guarded static calls, so a record that
-///         answered at creation and later reverts, loses its code, or answers with another width or
-///         a figure no genuine record can answer is charged as a stale record, at the resting centre,
-///         until it answers as a record again. A genuine `RateRecord` always answers.
+///         and afterwards the formula reads the record by guarded static calls, each given a fixed
+///         allowance of gas (`ASK_GAS`) and copied only when the answer is exactly one word, so a
+///         record that answered at creation and later reverts, loses its code, burns its gas, answers
+///         with another width, however wide, or answers a figure no genuine record can answer is
+///         charged as a stale record, at the resting centre, until it answers as a record again, and
+///         costs the caller at most the allowance per read. A genuine `RateRecord` always answers,
+///         well within the allowance.
 ///
 /// Which centre. A market charges the whole time since its last accrual at the one rate this formula
 /// answers when it is touched, and a reading delivered in between moves the record's centre. So that
@@ -67,6 +70,13 @@ contract FollowingRateFormula is IRateFormula {
     ///         own `STALE_AFTER` is the same figure: it is where the record writes the rest into its
     ///         history, and a record whose figure differs is refused at creation.
     uint256 public constant STALE_AFTER = 7 days;
+
+    /// @dev The gas each read of the record is given after creation. A genuine record's dearest
+    ///      answer is `centreOver`: two binary searches over its checkpoints at about 2,200 gas a
+    ///      step, so the allowance covers a history of more than 2^40 checkpoints, which at one every
+    ///      thirty minutes is longer than sixty million years. A record that burns its gas, or spends
+    ///      it on the width of its answer, costs the caller this much a read and no more.
+    uint256 internal constant ASK_GAS = 200_000;
 
     /// @notice The rate record whose centre this formula follows.
     address public immutable record;
@@ -144,8 +154,9 @@ contract FollowingRateFormula is IRateFormula {
     ///      block, and the centre as it stands otherwise; with the resting centre in place of the
     ///      record's over any time after the record went stale. The ask is a static call that changes
     ///      nothing, and a caller that does not answer it is not a fault. The record is read by
-    ///      guarded static calls too: a record that does not answer as a record, in this block, is
-    ///      charged as a stale one, at the resting centre, and nothing reverts.
+    ///      guarded static calls too, each within `ASK_GAS`: a record that does not answer as a
+    ///      record, in this block, is charged as a stale one, at the resting centre, and nothing
+    ///      reverts.
     function _centre() internal view returns (uint256) {
         RateRecord r = RateRecord(record);
         // The clock is the chain's: the span ends at this block, and the record is stale once the
@@ -190,12 +201,23 @@ contract FollowingRateFormula is IRateFormula {
     }
 
     /// @dev One word asked of the record by the static call `data`: whether the record answered with
-    ///      exactly one word, and the word. A revert, an account without code, and an answer of any
-    ///      other width are all no answer.
+    ///      exactly one word, and the word. A revert, an account without code, a record that runs out
+    ///      of its allowance, and an answer of any other width are all no answer. The call is given
+    ///      `ASK_GAS` and no more, and nothing of the answer is copied before its width is known: an
+    ///      answer of another width is left where the record put it, whatever its size, so a record
+    ///      that spends its allowance on the width of its answer cannot make the formula spend as
+    ///      much again to copy it. Only the scratch space is written.
     function _ask(bytes memory data) internal view returns (bool answered, uint256 word) {
-        (bool ok, bytes memory answer) = record.staticcall(data);
-        if (!ok || answer.length != 32) return (false, 0);
-        return (true, abi.decode(answer, (uint256)));
+        address target = record;
+        uint256 allowance = ASK_GAS;
+        assembly ("memory-safe") {
+            let ok := staticcall(allowance, target, add(data, 32), mload(data), 0, 0)
+            if and(ok, eq(returndatasize(), 32)) {
+                returndatacopy(0, 0, 32)
+                answered := 1
+                word := mload(0)
+            }
+        }
     }
 
     /// @dev One word read from `record_` by the static call `data`, or `BadConfig` if the record does
