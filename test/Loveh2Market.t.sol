@@ -406,18 +406,28 @@ contract Loveh2MarketTest is RateRecordBase {
         );
         assertEq(market.unlent() + market.loans(), market.deposits() + market.feeOwed(), "identity");
 
-        // Readings resume: the record is fresh from the block of the new reading, and its centre is
-        // charged again from then on.
+        // Readings resume: the record is fresh from the block of the new reading, but that reading
+        // starts the history afresh, so the dead spike is not charged again (security reading
+        // finding 1, fourth reading): the resting centre is charged until the next reading, and from
+        // its block the centre the new readings make, here the spike stated afresh.
         _submitAt(block.timestamp, _uniform(MAX_RATE));
-        assertEq(record.centre(), MAX_RATE);
+        assertEq(record.centre(), R5, "the resuming reading leaves the centre at rest");
         loansBefore = market.loans();
         depositsBefore = market.deposits();
         u = Utilisation.compute(loansBefore, depositsBefore);
-        assertEq(formula.ratePerSecond(loansBefore, depositsBefore), _shape(MAX_RATE, u), "fresh again");
+        assertEq(formula.ratePerSecond(loansBefore, depositsBefore), _shape(R5, u), "fresh again, at rest still");
         interestBefore = market.totalInterest();
-        skip(1 days);
+        skip(30 minutes);
+        _submitAt(block.timestamp, _uniform(MAX_RATE));
+        assertEq(record.centre(), MAX_RATE, "the next reading averages the resuming reading's rates");
+        skip(1 days - 30 minutes);
         market.accrue();
-        assertEq(market.totalInterest() - interestBefore, loansBefore * (_shape(MAX_RATE, u) * 1 days) / WAD);
+        uint256 resumedMean = (30 minutes * R5 + (1 days - 30 minutes) * MAX_RATE) / 1 days;
+        assertEq(
+            market.totalInterest() - interestBefore,
+            loansBefore * (_shape(resumedMean, u) * 1 days) / WAD,
+            "half an hour at rest, then the new readings' centre"
+        );
     }
 
     /// @dev Security reading finding 1 (third reading). The test above touches the market before the
@@ -459,9 +469,10 @@ contract Loveh2MarketTest is RateRecordBase {
         assertEq(market.loanOf(borrower), market.loans());
 
         // A stranger delivers the reading that ends the silence before anyone touches the market.
-        // The record is fresh again; the market's charge is what it was one block earlier.
+        // The record is fresh again, with its history begun afresh and its centre at rest; the
+        // market's charge is what it was one block earlier.
         _submitAt(block.timestamp, _uniform(MAX_RATE));
-        assertEq(record.centre(), MAX_RATE);
+        assertEq(record.centre(), R5, "the resuming reading leaves the centre at rest");
         assertEq(record.lastAsOf(), block.timestamp, "fresh again");
         assertEq(market.lastAccrual(), t2, "untouched throughout");
         assertEq(market.loans(), loansBefore + charge, "the view, with the silence ended: the same");
@@ -478,13 +489,23 @@ contract Loveh2MarketTest is RateRecordBase {
         );
         assertEq(market.unlent() + market.loans(), market.deposits() + market.feeOwed(), "identity");
 
-        // From the resumption on, the spike is charged again, from the block of its delivery.
+        // From the resumption on, the resting centre is charged until the next reading, and from the
+        // block of that reading the centre the new readings make: the dead spike never comes back of
+        // itself (security reading finding 1, fourth reading).
         loansBefore = market.loans();
         depositsBefore = market.deposits();
         u = Utilisation.compute(loansBefore, depositsBefore);
         interestBefore = market.totalInterest();
         skip(1 days);
+        assertEq(market.loans(), loansBefore + loansBefore * (_shape(R5, u) * 1 days) / WAD, "a day at rest");
+        _submitAt(block.timestamp, _uniform(MAX_RATE));
+        assertEq(record.centre(), MAX_RATE, "a day of the resuming reading's rates: the spike, stated afresh");
+        skip(1 days);
         market.accrue();
-        assertEq(market.totalInterest() - interestBefore, loansBefore * (_shape(MAX_RATE, u) * 1 days) / WAD);
+        assertEq(
+            market.totalInterest() - interestBefore,
+            loansBefore * (_shape((1 days * R5 + 1 days * MAX_RATE) / 2 days, u) * 2 days) / WAD,
+            "a day at rest, a day at the spike stated afresh"
+        );
     }
 }

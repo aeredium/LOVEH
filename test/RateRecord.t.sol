@@ -255,12 +255,14 @@ contract RateRecordTest is RateRecordBase {
     }
 
     /// @dev A silence cannot be rewritten: readings dated back into it are refused, so whoever holds
-    ///      signed readings cannot fill the window at once. The silence counts at the last stated
-    ///      rates, and the next fresh readings move the centre an hour of the window at a time.
+    ///      signed readings cannot fill the window at once. The silence, shorter than a week, counts at
+    ///      the last stated rates, and the next fresh readings move the centre an hour of the window at
+    ///      a time. (A silence of more than a week is not averaged at all: see
+    ///      `test_average_silenceLongerThanAWeekStartsTheHistoryAfresh`.)
     function test_stale_silenceCannotBeRewrittenByBackdatedReadings() public {
         _hourly(0, 24, _uniform(R));
         assertEq(record.centre(), R);
-        uint256 silentUntil = T0 + 24 * HOUR + 30 days;
+        uint256 silentUntil = T0 + 24 * HOUR + 6 days;
         vm.warp(silentUntil);
         // Readings dated hourly back into the silence, all at the highest rate, delivered now: every
         // one older than an hour is refused, so only the last gets in.
@@ -523,12 +525,12 @@ contract RateRecordTest is RateRecordBase {
         assertEq(record.centre(), low, "all of the step after 24 hours");
     }
 
-    /// @dev Silence: no reading for 30 days leaves the centre where it was, and the next reading
+    /// @dev Silence: no reading for six days leaves the centre where it was, and the next reading
     ///      counts the silent stretch at the last stated rates, not at the new ones.
     function test_average_silenceCountsAtLastStatedRates() public {
         _hourly(0, 24, _uniform(R));
         assertEq(record.centre(), R);
-        uint256 silentUntil = T0 + 24 * HOUR + 30 days;
+        uint256 silentUntil = T0 + 24 * HOUR + 6 days;
         vm.warp(silentUntil);
         assertEq(record.centre(), R, "unchanged through the silence");
 
@@ -537,6 +539,92 @@ contract RateRecordTest is RateRecordBase {
         assertEq(record.centre(), R, "the silent stretch counts at the last stated rate");
         _submitAt(silentUntil + HOUR, fresh);
         assertEq(record.centre(), (23 * R + 3 * R) / 24, "one hour of the new rate, 23 of the old");
+        // At exactly a week the record is not yet stale: the silence still counts at the last stated
+        // rates, however long the window.
+        uint256 lastAsOf = record.lastAsOf();
+        _submitAt(lastAsOf + record.STALE_AFTER(), _uniform(R));
+        assertEq(record.centre(), 3 * R, "a week to the second: the last stated rates fill the window");
+    }
+
+    /// @dev Security reading finding 1 (fourth reading). Before the fix, the reading that ended a
+    ///      silence of more than a week averaged a window lying wholly inside the silence, so the
+    ///      rates stated before it, dead for more than a week and rested by the formula, became the
+    ///      whole centre again from the block of the resumption: in full until the next reading and
+    ///      fading over the next 24 hours, or for a whole further week if only that one reading came.
+    ///      An outlier stated just before the silence, which had moved the centre only by its share
+    ///      of the window, was charged whole. Now the reading that ends such a silence starts the
+    ///      history afresh: the centre rests at the initial centre until the next reading, which
+    ///      averages the resuming reading's rates alone, and no window reaches back into the silence.
+    function test_average_silenceLongerThanAWeekStartsTheHistoryAfresh() public {
+        // A day of readings at 2R, then an outlier at the highest rate stated an hour before the
+        // silence: the centre has moved by the outlier's one hour of the window only.
+        _hourly(0, 23, _uniform(2 * R));
+        _submitAt(T0 + 24 * HOUR, _uniform(MAX_RATE));
+        assertEq(record.centre(), 2 * R, "the outlier counts forward: nothing has moved yet");
+        _submitAt(T0 + 25 * HOUR, _uniform(MAX_RATE));
+        uint256 beforeSilence = (23 * 2 * R + MAX_RATE) / 24;
+        assertEq(record.centre(), beforeSilence, "an hour of the window at the outlier");
+        uint256 lastAsOf = T0 + 25 * HOUR;
+        uint256 staleAt = lastAsOf + record.STALE_AFTER();
+
+        // Twenty days of silence, then a reading at 4R. Before the fix the centre became MAX_RATE
+        // here: the whole window lay inside the silence, at the outlier's rate.
+        uint256 resumedAt = lastAsOf + 20 days;
+        _submitAt(resumedAt, _uniform(4 * R));
+        assertEq(record.centre(), INITIAL_CENTRE, "the resuming reading starts the history afresh");
+        assertEq(record.readingCount(), 27);
+        assertEq(record.lastAsOf(), resumedAt, "the record is fresh again");
+        assertEq(record.centreOver(staleAt, resumedAt), INITIAL_CENTRE, "the rest");
+        assertEq(
+            record.centreOver(resumedAt, resumedAt + 1 days), INITIAL_CENTRE, "at rest still, until the next reading"
+        );
+        assertEq(record.centreOver(staleAt - 1, staleAt), beforeSilence, "the last second before the rest");
+
+        // The running sums carry on across the silence, as every reading's do.
+        (uint64 asOf,, uint256[10] memory sums) = record.readingAt(26);
+        assertEq(asOf, resumedAt);
+        (,, uint256[10] memory sumsBefore) = record.readingAt(25);
+        assertEq(sums[0], sumsBefore[0] + MAX_RATE * 20 days);
+
+        // The next reading, half an hour on, averages the resuming reading's rates alone over the time
+        // since it: the window reaches back no further than the resumption. Before the fix the window
+        // held 47 half-hours at MAX_RATE and one at 4R here, and MAX_RATE faded out over a day.
+        _submitAt(resumedAt + 30 minutes, _uniform(4 * R));
+        assertEq(record.centre(), 4 * R, "the dead rates are not averaged again");
+        assertEq(record.centreOver(resumedAt, resumedAt + 30 minutes), INITIAL_CENTRE, "the rest ran to this reading");
+        assertEq(record.centreOver(resumedAt + 30 minutes, resumedAt + 1 days), 4 * R, "then the new centre");
+
+        // Half an hour later again, readings at 3R: the centre is the mean over the time since the
+        // resumption, nothing earlier.
+        _submitAt(resumedAt + 1 hours, _uniform(3 * R));
+        assertEq(record.centre(), 4 * R, "3R counts forward: nothing has moved yet");
+        _submitAt(resumedAt + 90 minutes, _uniform(3 * R));
+        assertEq(record.centre(), (2 * 4 * R + 3 * R) / 3, "an hour at 4R, half an hour at 3R, nothing before");
+        assertEq(record.centreOver(resumedAt + 90 minutes, resumedAt + 2 hours), (2 * 4 * R + 3 * R) / 3);
+
+        // A day on, the window is the usual 24 hours, starting exactly where the history began.
+        _submitAt(resumedAt + 24 hours, _uniform(3 * R));
+        assertEq(record.centre(), (1 * 4 * R + 23 * 3 * R) / 24, "the window starts at the resumption");
+        _submitAt(resumedAt + 25 hours, _uniform(3 * R));
+        assertEq(record.centre(), 3 * R, "and a day after it, nothing of the resuming reading is left");
+
+        // If only the resuming reading had come, the centre would have stayed at the initial centre
+        // for the whole further week and the record would have rested again: a dead reading is never
+        // charged for more than a week. Shown on a second record, made at T0 like the first.
+        vm.warp(T0);
+        record = new RateRecord(labels, MAX_RATE, INITIAL_CENTRE, signer);
+        _hourly(0, 24, _uniform(MAX_RATE));
+        assertEq(record.centre(), MAX_RATE);
+        lastAsOf = T0 + 24 * HOUR;
+        _submitAt(lastAsOf + 10 days, _uniform(MAX_RATE));
+        assertEq(record.centre(), INITIAL_CENTRE, "a resumption alone leaves the centre at rest");
+        assertEq(record.centreOver(lastAsOf, lastAsOf + 7 days), MAX_RATE, "the week at the dead reading");
+        assertEq(record.centreOver(lastAsOf + 7 days, lastAsOf + 30 days), INITIAL_CENTRE, "and nothing after it");
+        _submitAt(lastAsOf + 30 days, _uniform(MAX_RATE));
+        assertEq(record.centre(), INITIAL_CENTRE, "a second silence ended by a second lone reading: the same");
+        assertEq(
+            record.centreOver(lastAsOf, lastAsOf + 40 days), (7 days * MAX_RATE + 33 days * INITIAL_CENTRE) / 40 days
+        );
     }
 
     /// @dev A change of leaders: the centre uses the 24-hour averages of the new three, whose history
@@ -702,16 +790,21 @@ contract RateRecordTest is RateRecordBase {
         uint256 staleAt = step + record.STALE_AFTER();
         assertEq(staleAt, step + 7 days);
 
-        // Twenty days of silence, then a reading at the same rates: the record's own centre is what
-        // it was, and the history now holds the rest.
+        // Twenty days of silence, then a reading at the same rates, and another half an hour later:
+        // the history now holds the rest, which runs to the second of them (the first starts the
+        // history afresh and leaves the centre at rest: security reading finding 1, fourth reading).
         uint256 resumedAt = step + 20 days;
         _submitAt(resumedAt, _uniform(3 * R));
-        assertEq(record.centre(), 3 * R, "the stored centre is the reading's, as before");
+        assertEq(record.centre(), INITIAL_CENTRE, "the resuming reading starts the history afresh");
+        uint256 again = resumedAt + 30 minutes;
+        _submitAt(again, _uniform(3 * R));
+        assertEq(record.centre(), 3 * R, "the reading after it averages its rates");
         assertEq(record.centreOver(step, staleAt), 3 * R, "the week before the record went stale");
         assertEq(record.centreOver(staleAt, resumedAt), INITIAL_CENTRE, "the thirteen days at rest");
         assertEq(record.centreOver(staleAt - 1, staleAt), 3 * R, "the last second before the rest");
         assertEq(record.centreOver(staleAt, staleAt + 1), INITIAL_CENTRE, "the first second of the rest");
-        assertEq(record.centreOver(resumedAt, resumedAt + 1 days), 3 * R, "the reading's centre from its block");
+        assertEq(record.centreOver(resumedAt, again), INITIAL_CENTRE, "at rest until the reading after the resumption");
+        assertEq(record.centreOver(again, again + 1 days), 3 * R, "that reading's centre from its block");
         assertEq(
             record.centreOver(step, resumedAt),
             (7 days * 3 * R + 13 days * INITIAL_CENTRE) / 20 days,
@@ -719,28 +812,29 @@ contract RateRecordTest is RateRecordBase {
         );
         assertEq(record.centreOver(staleAt + 2 days, resumedAt), INITIAL_CENTRE, "a span inside the silence");
         assertEq(
-            record.centreOver(step, resumedAt + 1 days),
-            (8 days * 3 * R + 13 days * INITIAL_CENTRE) / 21 days,
+            record.centreOver(step, again + 1 days),
+            (8 days * 3 * R + (13 days + 30 minutes) * INITIAL_CENTRE) / (21 days + 30 minutes),
             "a span across the silence and past its end"
         );
 
         // A second silence at the same centre rests the same way, and the first one is still there.
-        uint256 staleAgain = resumedAt + 7 days;
-        uint256 resumedAgain = resumedAt + 10 days;
+        uint256 staleAgain = again + 7 days;
+        uint256 resumedAgain = again + 10 days;
         _submitAt(resumedAgain, _uniform(3 * R));
         assertEq(record.centreOver(staleAgain, resumedAgain), INITIAL_CENTRE);
         assertEq(record.centreOver(staleAt, resumedAt), INITIAL_CENTRE);
         assertEq(
             record.centreOver(step, resumedAgain),
-            (7 days * 3 * R + 13 days * INITIAL_CENTRE + 7 days * 3 * R + 3 days * INITIAL_CENTRE) / 30 days
+            (7 days * 3 * R + (13 days + 30 minutes) * INITIAL_CENTRE + 7 days * 3 * R + 3 days * INITIAL_CENTRE)
+                / (30 days + 30 minutes)
         );
     }
 
     /// @dev The rest is dated by the block that ends the silence and the last reading's `asOf`, not by
     ///      the resuming reading's `asOf`: a reading dated before the moment of staleness but delivered
-    ///      after it still ends a silence, and the rest runs from that moment to its delivery. A reading
-    ///      delivered at the moment itself ends nothing. A reading that moves the centre when it ends a
-    ///      silence is checkpointed after the rest.
+    ///      after it still ends a silence, and the rest runs from that moment to the block of the
+    ///      reading after it. A reading delivered at the moment itself ends nothing. A reading that
+    ///      moves the centre after a silence is checkpointed after the rest.
     function test_centreOver_restIsDatedByTheDeliveryAndTheLastAsOf() public {
         _submitAt(T0, _uniform(3 * R));
         _submitAt(T0 + 24 * HOUR, _uniform(3 * R));
@@ -761,24 +855,35 @@ contract RateRecordTest is RateRecordBase {
         _submit(_reading(staleAt - 20 minutes, _descendingDeposits(), _uniform(3 * R)));
         assertEq(record.centreOver(staleAt - 1 hours, staleAt), 3 * R);
         assertEq(record.centreOver(staleAt, delivered), INITIAL_CENTRE, "at rest from the moment to the block");
-        assertEq(record.centreOver(delivered, delivered + 1 hours), 3 * R, "the centre again from the block");
+        assertEq(record.centre(), INITIAL_CENTRE, "the resuming reading starts the history afresh");
+        assertEq(record.centreOver(delivered, delivered + 1 hours), INITIAL_CENTRE, "at rest from the block too");
+        // The reading after it, half an hour on, averages the resuming reading's rates over the time
+        // since it, and the centre counts from that block.
+        _submitAt(delivered + 30 minutes, _uniform(3 * R));
+        assertEq(record.centre(), 3 * R);
+        assertEq(record.centreOver(delivered, delivered + 30 minutes), INITIAL_CENTRE, "the rest ran to the next one");
+        assertEq(record.centreOver(delivered + 30 minutes, delivered + 90 minutes), 3 * R, "the centre again from then");
 
-        // A silence ended by readings that move the centre: the rest, then the new centre from the
-        // block of the reading that moved it.
+        // A silence ended by readings at other rates: the rest, which runs to the reading after the
+        // resuming one, then the new centre from the block of that reading.
         uint256 lastAsOf = record.lastAsOf();
         staleAt = lastAsOf + 7 days;
         uint256 resumedAt = lastAsOf + 12 days;
-        _submitAt(resumedAt, _uniform(R));
-        assertEq(record.centre(), 3 * R, "the silence counts at the last stated rates: nothing moved yet");
-        _submitAt(resumedAt + 24 * HOUR, _uniform(R));
-        assertEq(record.centre(), R, "a day of the window at R: the centre moves to R");
+        _submitAt(resumedAt, _uniform(2 * R));
+        assertEq(record.centre(), INITIAL_CENTRE, "whatever was stated before the silence, the centre is at rest");
+        _submitAt(resumedAt + 30 minutes, _uniform(2 * R));
+        assertEq(record.centre(), 2 * R, "the next reading averages the resuming reading's rates alone");
         assertEq(record.centreOver(staleAt, resumedAt), INITIAL_CENTRE, "the rest");
-        assertEq(record.centreOver(resumedAt, resumedAt + 24 * HOUR), 3 * R, "the old centre from the resumption");
-        assertEq(record.centreOver(resumedAt + 24 * HOUR, resumedAt + 2 days), R, "the new centre from its block");
+        assertEq(record.centreOver(resumedAt, resumedAt + 30 minutes), INITIAL_CENTRE, "still the rest");
+        assertEq(record.centreOver(resumedAt + 30 minutes, resumedAt + 2 days), 2 * R, "the new centre from its block");
 
         // A silence at the initial centre rests at nothing: the history is one centre throughout.
+        _submitAt(resumedAt + 24 * HOUR, _uniform(R));
+        _submitAt(resumedAt + 48 * HOUR, _uniform(R));
+        assertEq(record.centre(), R, "a day of the window at R");
         lastAsOf = record.lastAsOf();
         _submitAt(lastAsOf + 30 days, _uniform(R));
+        assertEq(record.centre(), R);
         assertEq(record.centreOver(lastAsOf, lastAsOf + 30 days), R);
         assertEq(record.centreOver(lastAsOf + 7 days - 1, lastAsOf + 7 days + 1), R);
     }
@@ -833,40 +938,48 @@ contract RateRecordTest is RateRecordBase {
     // ------------------------------------------------------------------ widths
 
     /// @dev The widest rate held for a hundred years, and over the whole span a uint64 can name:
-    ///      no sum overflows and the centre is exact.
+    ///      no sum overflows and the centre is exact. A reading that ends a century of silence
+    ///      starts the history afresh, so the widest centre is made by the reading half an hour after
+    ///      each resumption.
     function test_noOverflow_atWidestRateForAHundredYears() public {
         uint256 widest = type(uint192).max;
         record = new RateRecord(labels, widest, 1, signer);
         _submitAt(T0, _uniform(widest));
         _submitAt(T0 + 100 * YEAR, _uniform(widest));
-        assertEq(record.centre(), widest);
+        assertEq(record.centre(), 1, "a century of silence ended: the history begins afresh, at rest");
         (,, uint256[10] memory sums) = record.readingAt(1);
-        assertEq(sums[0], widest * (100 * YEAR));
+        assertEq(sums[0], widest * (100 * YEAR), "the running sum carries the widest rate over the century");
+        _submitAt(T0 + 100 * YEAR + 30 minutes, _uniform(widest));
+        assertEq(record.centre(), widest);
         // A further century, then the last second a uint64 can hold.
         _submitAt(T0 + 200 * YEAR, _uniform(widest));
+        assertEq(record.centre(), 1);
+        _submitAt(T0 + 200 * YEAR + 30 minutes, _uniform(widest));
         assertEq(record.centre(), widest);
         _submitAt(type(uint64).max, _uniform(widest));
-        assertEq(record.centre(), widest);
-        (,, sums) = record.readingAt(3);
+        assertEq(record.centre(), 1);
+        (,, sums) = record.readingAt(5);
         assertEq(sums[0], widest * (type(uint64).max - T0));
         assertLe(record.centre(), record.maxRate());
         // The integral of the centre does not overflow either, and is exact over the whole span a
-        // uint64 can name. The history: the centre was 1 for the first century; the widest rate from
-        // the second reading for a week, then at rest (the initial centre, 1) until the third; the
-        // widest rate again for a week, then at rest until the last second, where it is widest again.
+        // uint64 can name. The history: the centre was 1 for the first century and the half hour
+        // after the resumption; the widest rate from the reading after it for a week, then at rest
+        // (the initial centre, 1) until the reading after the next resumption; the widest rate again
+        // for a week, then at rest to the last second, where the last resumption leaves it at rest.
         uint256 week = record.STALE_AFTER();
-        uint256 a = T0 + 100 * YEAR;
-        uint256 b = T0 + 200 * YEAR;
+        uint256 a = T0 + 100 * YEAR + 30 minutes;
+        uint256 b = T0 + 200 * YEAR + 30 minutes;
         uint256 c = type(uint64).max;
-        assertEq(record.centreOver(a, a + week), widest, "the widest centre for the week after a reading");
-        assertEq(record.centreOver(a + week, b), 1, "then at rest until the next reading");
+        assertEq(record.centreOver(a - 30 minutes, a), 1, "at rest until the reading after the resumption");
+        assertEq(record.centreOver(a, a + week), widest, "the widest centre for the week after that reading");
+        assertEq(record.centreOver(a + week, b), 1, "then at rest until the next");
         assertEq(record.centreOver(b, b + week), widest);
         assertEq(record.centreOver(b + week, c), 1);
-        assertEq(record.centreOver(c, c), widest, "the widest centre in force at the last second");
-        assertEq(record.centreOver(T0, b), (100 * YEAR + widest * week + (100 * YEAR - week)) / (200 * YEAR));
+        assertEq(record.centreOver(c, c), 1, "at rest at the last second: a lone resuming reading");
+        assertEq(record.centreOver(T0, b), ((a - T0) + widest * week + (b - a - week)) / (b - T0));
         assertEq(
             record.centreOver(T0, c),
-            (100 * YEAR + 2 * widest * week + (c - a - 2 * week)) / (c - T0),
+            (2 * widest * week + (c - T0 - 2 * week)) / (c - T0),
             "the integral over the widest span"
         );
     }

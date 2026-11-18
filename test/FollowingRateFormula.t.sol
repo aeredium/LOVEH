@@ -437,10 +437,17 @@ contract FollowingRateFormulaTest is RateRecordBase {
         vm.warp(lastAsOf + 365 days);
         assertEq(formula.ratePerSecond(80, 100), INITIAL_CENTRE, "and stays at rest however long the silence");
 
-        // A reading accepted again makes the record fresh from that block: the centre is charged once more.
+        // A reading accepted again makes the record fresh from that block, but it starts the history
+        // afresh: the dead spike is not averaged again, and the record's own centre is the initial
+        // centre until the next reading (security reading finding 1, fourth reading).
         _submitAt(block.timestamp, _uniform(MAX_RATE));
+        assertEq(record.centre(), INITIAL_CENTRE, "the resuming reading leaves the centre at rest");
+        assertEq(formula.ratePerSecond(80, 100), INITIAL_CENTRE, "fresh again, at the resting centre still");
+        // The next reading averages the resuming reading's rates: the spike is charged once more, for
+        // a week at the most.
+        _submitAt(block.timestamp + 30 minutes, _uniform(MAX_RATE));
         assertEq(record.centre(), MAX_RATE);
-        assertEq(formula.ratePerSecond(80, 100), MAX_RATE, "fresh again");
+        assertEq(formula.ratePerSecond(80, 100), MAX_RATE, "the new readings' centre");
         vm.warp(block.timestamp + 7 days);
         assertEq(formula.ratePerSecond(80, 100), MAX_RATE);
         vm.warp(block.timestamp + 1);
@@ -533,24 +540,40 @@ contract FollowingRateFormulaTest is RateRecordBase {
         assertEq(touchedDuring.rate(formula, 80, 100), R, "touched during the silence: at rest since");
 
         // A reading ends the silence in this block, before either caller is touched. Nothing they are
-        // charged changes: the rest is in the record's history now.
-        _submitAt(block.timestamp, _uniform(3 * R));
-        assertEq(record.centre(), 3 * R);
-        assertEq(record.lastAsOf(), block.timestamp, "fresh again");
-        assertEq(formula.ratePerSecond(80, 100), 3 * R, "a direct quote: the centre as it stands");
+        // charged changes: the rest is in the record's history now. The resuming reading starts the
+        // history afresh, so the record's centre is at rest until the next reading (security reading
+        // finding 1, fourth reading).
+        uint256 resumedAt = block.timestamp;
+        _submitAt(resumedAt, _uniform(3 * R));
+        assertEq(record.centre(), R, "the resuming reading leaves the centre at rest");
+        assertEq(record.lastAsOf(), resumedAt, "fresh again");
+        assertEq(formula.ratePerSecond(80, 100), R, "a direct quote: the centre as it stands, at rest");
         assertEq(untouched.rate(formula, 80, 100), mean, "the silence is priced as it was while open");
         assertEq(touchedDuring.rate(formula, 80, 100), R, "and so is the time since a touch inside it");
         assertEq(untouched.rate(formula, 100, 100), mean * (WAD + FULL) / WAD);
         assertEq(untouched.rate(formula, 40, 100), _expected(mean, 0.4e18));
 
-        // From the resumption on, the record's centre is charged: a day later the untouched caller's
-        // span holds the week at 3R, the thirteen days at rest and a day at 3R.
-        vm.warp(block.timestamp + 1 days);
-        assertEq(untouched.rate(formula, 80, 100), (8 days * 3 * R + 13 days * R) / 21 days);
-        assertEq(touchedDuring.rate(formula, 80, 100), (11 days * R + 1 days * 3 * R) / 12 days);
-        // A caller accrued at the resumption itself sees only the new centre.
+        // The reading after the resuming one, half an hour on, averages its rates: from that block
+        // the record's centre is charged again. A day after the resumption the untouched caller's
+        // span holds the week at 3R, the thirteen days and a half hour at rest, and the rest of the
+        // day at 3R.
+        uint256 again = resumedAt + 30 minutes;
+        _submitAt(again, _uniform(3 * R));
+        assertEq(record.centre(), 3 * R);
+        assertEq(formula.ratePerSecond(80, 100), 3 * R, "a direct quote: the new centre");
+        vm.warp(resumedAt + 1 days);
+        assertEq(
+            untouched.rate(formula, 80, 100),
+            (7 days * 3 * R + (13 days + 30 minutes) * R + (1 days - 30 minutes) * 3 * R) / 21 days
+        );
+        uint256 sinceTouch = ((11 days + 30 minutes) * R + (1 days - 30 minutes) * 3 * R) / 12 days;
+        assertEq(touchedDuring.rate(formula, 80, 100), sinceTouch, "eleven days and a half hour at rest, then 3R");
+        // A caller accrued at the resumption itself sees the rest to the next reading, then the new
+        // centre; one accrued at the next reading sees the new centre alone.
         AccruingCaller afterwards = new AccruingCaller();
-        afterwards.accrueAt(block.timestamp - 1 days);
+        afterwards.accrueAt(resumedAt);
+        assertEq(afterwards.rate(formula, 80, 100), (30 minutes * R + (1 days - 30 minutes) * 3 * R) / 1 days);
+        afterwards.accrueAt(again);
         assertEq(afterwards.rate(formula, 80, 100), 3 * R);
     }
 
@@ -565,19 +588,25 @@ contract FollowingRateFormulaTest is RateRecordBase {
         vm.warp(step + 20 days);
         uint256 mean = (7 days * (R / 5) + 13 days * R) / 20 days;
         assertEq(untouched.rate(formula, 80, 100), mean);
-        // The resuming reading states 3R: the silence counts at the last stated rates, so the centre
-        // does not move at once, but the record is fresh and the silence is rested in its history.
+        // The resuming reading states 3R. Before the fix of security reading finding 1 (fourth
+        // reading) the silence counted at the last stated rates, so the dead centre R / 5 came back
+        // into force from this block until the next reading, a day on; now the resuming reading
+        // starts the history afresh, the centre is at rest until the next reading, and the record is
+        // fresh with the silence rested in its history.
         _submitAt(block.timestamp, _uniform(3 * R));
-        assertEq(record.centre(), R / 5);
+        assertEq(record.centre(), R, "at rest, not at the dead centre");
         assertEq(untouched.rate(formula, 80, 100), mean, "not re-priced at the dead centre");
         assertGt(untouched.rate(formula, 80, 100), R / 5, "the lenders are not charged for the silence at it");
-        // A day later the readings have moved the centre to 3R from that block.
+        assertEq(formula.ratePerSecond(80, 100), R, "the dead centre is not charged after the resumption either");
+        // A day later the readings have moved the centre to 3R from that block: the resuming reading's
+        // rates alone, over the day since it.
         _submitAt(block.timestamp + 24 hours, _uniform(3 * R));
         assertEq(record.centre(), 3 * R);
         vm.warp(block.timestamp + 1 days);
         assertEq(
             untouched.rate(formula, 80, 100),
-            (7 days * (R / 5) + 13 days * R + 1 days * (R / 5) + 1 days * 3 * R) / 22 days
+            (7 days * (R / 5) + 13 days * R + 1 days * R + 1 days * 3 * R) / 22 days,
+            "the day after the resumption at rest, not at the dead centre"
         );
     }
 

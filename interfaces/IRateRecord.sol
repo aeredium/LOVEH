@@ -103,8 +103,9 @@ interface IRateRecord {
     // ------------------------------------------------------------------ what the record answers
 
     /// @notice The stored centre: the mean of the three leaders' 24-hour average rates at the last
-    ///         accepted reading, or the initial centre before the second reading. Never reverts and
-    ///         never depends on the clock.
+    ///         accepted reading, or the initial centre before the second reading and after a reading
+    ///         that ends a silence of more than the record's `STALE_AFTER` (7 days), which starts
+    ///         the history afresh. Never reverts and never depends on the clock.
     function centre() external view returns (uint256);
     /// @notice The indexes of the three leaders named by the last accepted reading, in rank order.
     function leaders() external view returns (uint256[3] memory);

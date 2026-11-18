@@ -107,7 +107,8 @@ A reading then passes, in this order:
    never, whatever its deadline says: it cannot be held back and delivered when its moment suits, nor
    dated back into a silence so as to rewrite the window at once. Of two readings outstanding together,
    delivering the later first still shuts the earlier out under check 6, but what can be shut out that
-   way is at most an hour of history, and a silence always counts at the last stated rates.
+   way is at most an hour of history, and a silence counts at the last stated rates for a week at the
+   most (see "A silence in the history" below).
 6. If a reading was accepted before, `asOf` is at least 30 minutes after the last accepted `asOf`:
    `TooSoon(asOf, lastAsOf)`.
 7. Every rate is at most the record's highest rate: `RateTooHigh(index, rate)`.
@@ -143,7 +144,11 @@ And `executeRotate(id)` checks:
    readings; the oldest is overwritten.
 3. The centre becomes the sum of the three leaders' averages over the window, divided by three, rounded
    down. The first accepted reading has no span to average over: it starts the history and names the
-   leaders, and the centre stays the initial centre.
+   leaders, and the centre stays the initial centre. A reading that ends a silence of more than
+   `STALE_AFTER` (7 days), by the block of its delivery against the last accepted `asOf`, does the same:
+   it writes the rest into the history (see "A silence in the history" below), starts the history
+   afresh and names the leaders, and the centre becomes the initial centre, where it stays until the
+   next reading. The rates stated before such a silence are never averaged again.
 4. The event `ReadingAccepted(id, asOf, leaders, centre)` is emitted.
 
 ## The averaging rule
@@ -154,17 +159,20 @@ reading `n-1` plus reading `n-1`'s rate multiplied by the seconds between the tw
 reading's running sums are zero.
 
 The average of a candidate at reading `n` is taken over the window ending at `asOf(n)` and starting 24
-hours earlier, or at the oldest reading still kept if the history is shorter than that. The running sum
-at the window's start is found from the latest stored reading at or before the start, plus that reading's
-rate multiplied by the seconds from it to the start. The average is the difference of the two running
-sums divided by the window's length.
+hours earlier, or at the first reading of the current history still kept if the history is shorter than
+that: the first reading ever, or the latest reading that ended a silence of more than `STALE_AFTER`
+(below). The running sum at the window's start is found from the latest stored reading at or before the
+start, plus that reading's rate multiplied by the seconds from it to the start. The average is the
+difference of the two running sums divided by the window's length.
 
 Because a stated rate counts forward, a stretch of silence counts at the last stated rates, not at the
-rates the next reading brings. And because the centre is a stored value, it never depends on the clock:
-with no new reading for any length of time, the centre stays what it is. What a market is charged
-during such a silence is bounded by the following formula while the silence is open, and by the rest
-the record writes into its history once a reading ends it: see "A silence in the history" and "A stale
-record" below.
+rates the next reading brings, for as long as the silence is shorter than `STALE_AFTER` (7 days). And
+because the centre is a stored value, it never depends on the clock: with no new reading for any length
+of time, the centre stays what it is. What a market is charged during such a silence is bounded by the
+following formula while the silence is open, and by the rest the record writes into its history once a
+reading ends it; and a silence of more than `STALE_AFTER` is not averaged at all: the reading that ends
+it starts the history afresh, so the rates stated before it are dead for good. See "A silence in the
+history" and "A stale record" below.
 
 ### A worked example
 
@@ -209,22 +217,34 @@ depends on nothing but the stored history and the two arguments; it never depend
 
 ### A silence in the history
 
-The stored centre does not rest: readings move it and silence leaves it as it is. But the following
-formula charges it only until the last reading's `asOf` is `STALE_AFTER` (7 days) old, and the initial
-centre, the resting centre, after that. So that a reading which ends a silence cannot re-price the
-silence, the rest is written into the history before the reading is. A reading accepted in a block
-more than `STALE_AFTER` after the last accepted `asOf` first checkpoints the initial centre at the
-moment the record went stale, `lastAsOf + STALE_AFTER`, and then, if the centre it computes differs,
-checkpoints that centre at its own block. The moment of the rest is never before the last checkpoint,
-which is at most `MAX_AGE` (an hour) after the last `asOf`; the moment is fixed by the last reading's
-`asOf` and the block of delivery, not by the resuming reading's `asOf`, which may be a little before
-it. A reading delivered at the moment itself ends no silence. A stored centre that is the initial
-centre already rests at nothing, and no checkpoint is made.
+The stored centre does not rest of itself: readings move it and silence leaves it as it is. But the
+following formula charges it only until the last reading's `asOf` is `STALE_AFTER` (7 days) old, and
+the initial centre, the resting centre, after that. So that a reading which ends a silence cannot
+re-price the silence, the rest is written into the history before the reading is. A reading accepted
+in a block more than `STALE_AFTER` after the last accepted `asOf` first checkpoints the initial centre
+at the moment the record went stale, `lastAsOf + STALE_AFTER`. The moment of the rest is never before
+the last checkpoint, which is at most `MAX_AGE` (an hour) after the last `asOf`; the moment is fixed by
+the last reading's `asOf` and the block of delivery, not by the resuming reading's `asOf`, which may
+be a little before it. A reading delivered at the moment itself ends no silence. A stored centre that
+is the initial centre already rests at nothing, and no checkpoint is made.
+
+And so that the rates stated before the silence, dead for more than a week, are not put back in force
+by the reading that ends it, that reading starts the history afresh, as the first reading ever did. Its
+window would lie wholly inside the silence, and averaging it would make the dead rates the whole
+centre; instead the reading is averaged over nothing: it names the leaders and is stored, with running
+sums that carry on from the reading before it as every reading's do, but the stored centre becomes the
+initial centre and stays there until the next reading, and the window of that reading and of every
+later one reaches no further back than the resuming reading's `asOf`. The next reading, 30 minutes
+later at the least, thus averages the resuming reading's rates alone over the time since it, exactly
+as the second reading ever averages the first's. The rest written at the moment of staleness therefore
+runs to the block of the reading after the resuming one, and no rate stated before a silence of more
+than a week is ever charged after it. A reading that ends a silence makes no checkpoint of its own.
 
 So `centreOver` over a span across a silence that a reading has since ended answers exactly what the
-formula charged while the silence was open: the stored centre up to the moment of staleness, the
-initial centre from then to the block of the resuming reading, and that reading's centre after it. A
-silence still open is not in the history; the formula prices it itself (see "A stale record" below).
+formula charged while the silence was open: the stored centre up to the moment of staleness, and the
+initial centre from then to the block of the reading after the resuming one, from which that reading's
+centre counts. A silence still open is not in the history; the formula prices it itself (see "A stale
+record" below).
 
 The following formula reads `centreOver(lastAccrual, now)` for the market that asks it, so a market
 untouched for a week during which the centre rose is charged the old centre for the time before the
@@ -234,7 +254,7 @@ rise and the new one from the block of the rise. See "The following formula" bel
 
 | Function              | Answer                                                                          |
 | --------------------- | ------------------------------------------------------------------------------- |
-| `centre()`            | The stored centre. Never reverts; never depends on the clock.                   |
+| `centre()`            | The stored centre; the initial centre before the second reading and after a reading that ends a silence of more than `STALE_AFTER`. Never reverts; never depends on the clock. |
 | `centreOver(from, to)` | The mean of the centre over the span, weighted by time, from the checkpoints of its changes and of the rests of silences that readings have ended; the centre in force at `to` for a span of no length. Depends only on the history and its arguments. |
 | `leaders()`           | The three leaders' indexes, in rank order, from the last accepted reading.      |
 | `lastAsOf()`          | `asOf` of the last accepted reading; zero before any.                           |
@@ -258,7 +278,7 @@ rise and the new one from the block of the rise. See "The following formula" bel
 | `HISTORY`        | 64 readings                | Constant; `HISTORY × MIN_INTERVAL` exceeds `WINDOW`, asserted at creation |
 | `ROTATE_DELAY`   | 72 hours                   | Constant                                                    |
 | `ROTATE_WINDOW`  | 72 hours                   | Constant; how long after becoming ready a handover may still be executed, then void |
-| `STALE_AFTER`    | 7 days                     | Constant; the moment after the last `asOf` at which the record is stale and a reading that ends the silence rests the history; the formula's figure, which must be the same |
+| `STALE_AFTER`    | 7 days                     | Constant; the moment after the last `asOf` at which the record is stale; a reading that ends the silence rests the history at that moment and starts the history afresh, so the rates stated before the silence are never averaged again; the formula's figure, which must be the same |
 | `candidates`     | ten non-zero, distinct labels | Set at creation; refused with `BadConfig()` otherwise    |
 | `maxRate`        | above zero, below 2^192    | Set at creation; refused with `BadConfig()` otherwise. The bound keeps every running sum below 2^256 over any span a 64-bit `asOf` can name |
 | `initialCentre`  | above zero, at most `maxRate` | Set at creation; refused with `BadConfig()` otherwise    |
@@ -308,9 +328,13 @@ market charged its last centre for ever, a spike as much as a lull. The formula 
 the record's `lastAsOf`, the `asOf` of the last accepted reading, and once the block is more than
 `STALE_AFTER` (7 days) past it, the centre charged is the resting centre, `restingCentre`: the record's
 `initialCentre`, read once at creation and lowered to the ceiling if ever above it. At exactly seven
-days the record's centre is still charged; a second later, the resting centre. The record itself is
-not touched: `centre()` still answers the stored figure, and a reading accepted again makes the record
-fresh from the block of its delivery, so the record's centre is charged once more from then on.
+days the record's centre is still charged; a second later, the resting centre. While the silence is
+open the record itself is not touched: `centre()` still answers the stored figure. A reading accepted
+again makes the record fresh from the block of its delivery, but it starts the record's history afresh
+(see "A silence in the history" above): the record's centre is then the initial centre, the very
+resting centre, until the reading after it, so what is charged from the resumption is the resting
+centre still, and then the centre the new readings make. The rates stated before the silence are not
+charged again.
 
 Over a span that crosses the moment the record went stale, a market is charged the record's mean
 centre over the time before that moment and the resting centre over the time after it, each weighted
@@ -319,19 +343,23 @@ by its length, so the time already priced at the record's centre is not re-price
 initial centre, the very figure the record answers before its second reading, so the two agree.
 
 Seven days is long enough for a lost signer to be replaced by a handover (72 hours) and for the new
-signer's readings to begin, and short enough that no dead reading is charged for more than a week.
+signer's readings to begin, and short enough that no dead reading is charged for more than a week:
+a reading is charged in full for at most a week of silence after its `asOf`, and the reading that
+ends a longer silence does not average it again.
 
 A silence that has ended. The formula prices a silence itself only while it is open, from the last
 reading's `asOf`. Once a reading has resumed, `lastAsOf` has moved on and the formula can no longer
 see the silence; what it sees instead is the record's history, into which the resuming reading wrote
 the rest (see "A silence in the history" above). So a market untouched across a silence that a
 reading has ended is charged, through `centreOver`, the record's centre up to the moment of
-staleness, the resting centre from then to the block of the resuming reading, and the record's centre
-again after it: exactly what it would have been charged had it been touched one block before the
-reading. Nobody re-prices a silence by delivering the reading that ends it, and no touch of the
-market during the silence is needed to fix the rest. (The formula's resting centre is the record's
-`initialCentre` lowered to the ceiling, and the record rests at `initialCentre` itself; a record's
-`initialCentre` is at most its `maxRate`, the ceiling, so the two are the same figure.)
+staleness, the resting centre from then to the block of the reading after the resuming one, and the
+centre the new readings make after it: exactly what it would have been charged had it been touched
+one block before the resuming reading, and then at the resting centre until the reading after it.
+Nobody re-prices a silence by delivering the reading that ends it, no touch of the market during the
+silence is needed to fix the rest, and the rates stated before the silence are never charged again.
+(The formula's resting centre is the record's `initialCentre` lowered to the ceiling, and the record
+rests at `initialCentre` itself; a record's `initialCentre` is at most its `maxRate`, the ceiling, so
+the two are the same figure.)
 
 | Figure              | Rule                                                       | Kind                                                   |
 | ------------------- | ---------------------------------------------------------- | ------------------------------------------------------ |

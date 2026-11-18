@@ -45,6 +45,9 @@ import {Utilisation} from "./Utilisation.sol";
 /// that ends one writes the rest into the record's history (the record's `STALE_AFTER`, the same
 /// figure, read at creation and refused if it differs), so a market untouched across a silence that
 /// has ended is charged, through `centreOver`, exactly what it would have been charged during it.
+/// The reading that ends a silence also starts the record's history afresh: its stored centre is the
+/// initial centre, the resting centre, until the next reading, so the rates stated before the silence,
+/// dead for more than a week, are not charged again after it.
 contract FollowingRateFormula is IRateFormula {
     error ZeroRecord();
     error InvalidTarget();
