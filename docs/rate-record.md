@@ -95,7 +95,7 @@ Every instruction passes these three first, each refused with its own error:
 
 1. The deadline is not past: refused with `Expired(deadline)` once the block's time is after it. At the
    deadline itself it is still accepted.
-2. The id has not been used before, by either kind of instruction: refused with `AlreadyUsed(id)`.
+2. The id has not been used before, by any of the three kinds of instruction: refused with `AlreadyUsed(id)`.
 3. The signature recovers to the current signer: otherwise `BadSignature()`. A malformed signature is a
    bad signature.
 
