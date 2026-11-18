@@ -83,6 +83,69 @@ contract RecordWithoutStaleAfter is RecordWithoutCentreOver {
     }
 }
 
+/// @notice A record that answers as a record at creation and changes afterwards: it can be made to
+///         revert, to answer with the wrong width, or to answer a last reading no genuine record can
+///         name (security reading finding 2, fourth reading). `lastAsOf` is declared a word wide so
+///         that it can answer beyond a uint64; the selector is the same.
+contract RecordThatChangesLater {
+    enum Mode {
+        Answers,
+        Reverts,
+        WrongWidth
+    }
+
+    uint256 public maxRate;
+    uint256 public initialCentre;
+    uint256 public STALE_AFTER = 7 days;
+    Mode public mode;
+    uint256 internal _centre;
+    uint256 internal _lastAsOf;
+
+    constructor(uint256 maxRate_, uint256 centre_, uint256 initialCentre_) {
+        maxRate = maxRate_;
+        initialCentre = initialCentre_;
+        _centre = centre_;
+        _lastAsOf = block.timestamp;
+    }
+
+    function setMode(Mode mode_) external {
+        mode = mode_;
+    }
+
+    function setCentre(uint256 value) external {
+        _centre = value;
+    }
+
+    function setLastAsOf(uint256 value) external {
+        _lastAsOf = value;
+    }
+
+    function centre() external view returns (uint256) {
+        return _answer(_centre);
+    }
+
+    function lastAsOf() external view returns (uint256) {
+        return _answer(_lastAsOf);
+    }
+
+    function centreOver(uint256, uint256) external view returns (uint256) {
+        return _answer(_centre);
+    }
+
+    function _answer(uint256 word) internal view returns (uint256) {
+        if (mode == Mode.Reverts) revert("the record no longer answers");
+        if (mode == Mode.WrongWidth) {
+            // Two words where one is expected.
+            assembly {
+                mstore(0, word)
+                mstore(32, word)
+                return(0, 64)
+            }
+        }
+        return word;
+    }
+}
+
 contract FollowingRateFormulaTest is RateRecordBase {
     uint256 internal constant TARGET = 0.8e18;
     uint256 internal constant FLOOR = 0.5e18;
@@ -166,6 +229,16 @@ contract FollowingRateFormulaTest is RateRecordBase {
         mock.setMaxRate(type(uint256).max / WAD + 1);
         vm.expectRevert(FollowingRateFormula.BadConfig.selector);
         new FollowingRateFormula(address(mock), TARGET, FLOOR, FULL);
+        // The ceiling is bounded below 2^192 by the formula itself, as a genuine record's highest
+        // rate is, so the piecewise pricing of a span across the moment of staleness cannot overflow
+        // whatever the record (security reading finding 2, fourth reading). A multiple of one with a
+        // floor and a target a hair below one is steep enough, and leaves room for such a ceiling.
+        mock.setMaxRate(uint256(type(uint192).max) + 1);
+        vm.expectRevert(FollowingRateFormula.BadConfig.selector);
+        new FollowingRateFormula(address(mock), WAD - 1, WAD - 1, 1);
+        mock.setMaxRate(type(uint192).max);
+        FollowingRateFormula atTheWidth = new FollowingRateFormula(address(mock), WAD - 1, WAD - 1, 1);
+        assertEq(atTheWidth.ceiling(), type(uint192).max);
         // A record whose initial centre is nothing would rest at nothing: refused.
         mock.setMaxRate(MAX_RATE);
         mock.setInitialCentre(0);
@@ -219,6 +292,83 @@ contract FollowingRateFormulaTest is RateRecordBase {
         caller.accrueAt(T0 - 1 days);
         assertEq(caller.rate(f, 80, 100), R);
         assertEq(f.ratePerSecond(80, 100), R);
+    }
+
+    /// @dev Security reading finding 2 (fourth reading). The constructor asks the record once, so a
+    ///      record that answered at creation and changed afterwards passed it, and before the fix
+    ///      `ratePerSecond` read the record by plain calls, which reverted with it: a record that
+    ///      reverted, lost its code, or answered a last reading wider than a uint64 stopped every
+    ///      market on the formula. Now the record is read by guarded static calls, and a record that
+    ///      does not answer as a record, with one word, is charged as a stale one, at the resting
+    ///      centre, until it answers again; nothing reverts.
+    function test_aRecordThatStopsAnsweringIsChargedAtTheRestingCentre() public {
+        RecordThatChangesLater changing = new RecordThatChangesLater(MAX_RATE, 3 * R, R);
+        FollowingRateFormula f = new FollowingRateFormula(address(changing), TARGET, FLOOR, FULL);
+        assertEq(f.restingCentre(), R);
+        AccruingCaller caller = new AccruingCaller();
+        caller.accrueAt(T0 - 1 days);
+        assertEq(f.ratePerSecond(80, 100), 3 * R, "the record answers: its centre");
+        assertEq(caller.rate(f, 80, 100), 3 * R, "and its centre over the caller's span");
+
+        // The record reverts. Before the fix both of these reverted with it.
+        changing.setMode(RecordThatChangesLater.Mode.Reverts);
+        assertEq(f.ratePerSecond(80, 100), R, "a record that reverts: the resting centre");
+        assertEq(caller.rate(f, 80, 100), R, "over the caller's span too");
+        assertEq(f.ratePerSecond(0, 100), R * FLOOR / WAD, "the shape is kept");
+        assertEq(f.ratePerSecond(100, 100), R * (WAD + FULL) / WAD);
+        assertEq(caller.rate(f, 40, 100), _expected(R, 0.4e18));
+
+        // The record answers with the wrong width.
+        changing.setMode(RecordThatChangesLater.Mode.WrongWidth);
+        assertEq(f.ratePerSecond(80, 100), R, "a record that answers two words: the resting centre");
+        assertEq(caller.rate(f, 80, 100), R);
+
+        // The record answers again: its centre is charged once more.
+        changing.setMode(RecordThatChangesLater.Mode.Answers);
+        assertEq(f.ratePerSecond(80, 100), 3 * R, "answering again: its centre");
+        assertEq(caller.rate(f, 80, 100), 3 * R);
+
+        // The record answers a last reading wider than any `asOf` a record can store: no record's
+        // answer, so the resting centre. Before the fix the plain call refused to decode it.
+        changing.setLastAsOf(type(uint256).max);
+        assertEq(f.ratePerSecond(80, 100), R, "a last reading no record can name: the resting centre");
+        assertEq(caller.rate(f, 80, 100), R);
+        changing.setLastAsOf(uint256(type(uint64).max));
+        assertEq(f.ratePerSecond(80, 100), 3 * R, "the widest a record can name is fresh");
+        changing.setLastAsOf(block.timestamp - 8 days);
+        assertEq(f.ratePerSecond(80, 100), R, "and one eight days old is stale");
+        changing.setLastAsOf(block.timestamp);
+
+        // The record's `centreOver` answers above the ceiling: lowered, over a span and across the
+        // moment of staleness alike, so nothing overflows.
+        changing.setCentre(type(uint256).max);
+        assertEq(caller.rate(f, 80, 100), MAX_RATE, "a mean above the ceiling is lowered to it");
+        assertEq(f.ratePerSecond(80, 100), MAX_RATE);
+        changing.setLastAsOf(block.timestamp - 7 days - 1 days);
+        caller.accrueAt(block.timestamp - 2 days);
+        uint256 acrossTheMoment = (1 days * MAX_RATE + 1 days * R) / 2 days;
+        assertEq(caller.rate(f, 80, 100), acrossTheMoment, "a day at the ceiling, a day at rest");
+        changing.setMode(RecordThatChangesLater.Mode.Reverts);
+        assertEq(caller.rate(f, 80, 100), R, "the same span with a record that reverts: at rest throughout");
+        changing.setMode(RecordThatChangesLater.Mode.Answers);
+        changing.setCentre(3 * R);
+        changing.setLastAsOf(block.timestamp);
+        caller.accrueAt(T0 - 1 days);
+
+        // The record loses its code. Before the fix a plain call to an account without code reverted.
+        vm.etch(address(changing), hex"");
+        assertEq(address(changing).code.length, 0);
+        assertEq(f.ratePerSecond(80, 100), R, "a record without code: the resting centre");
+        assertEq(caller.rate(f, 80, 100), R);
+        assertEq(f.ratePerSecond(100, 100), R * (WAD + FULL) / WAD);
+
+        // A genuine record on a formula is read the same way, and answers as before.
+        assertEq(formula.ratePerSecond(80, 100), INITIAL_CENTRE);
+        _setCentre(3 * R);
+        assertEq(formula.ratePerSecond(80, 100), 3 * R);
+        caller.accrueAt(T0);
+        vm.warp(T0 + 48 hours);
+        assertEq(caller.rate(formula, 80, 100), 2 * R, "a day at R and a day at 3R, through the guarded calls");
     }
 
     // ------------------------------------------------------------------ shape (4, 8.13)

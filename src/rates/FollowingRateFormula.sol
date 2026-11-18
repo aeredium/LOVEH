@@ -14,9 +14,13 @@ import {Utilisation} from "./Utilisation.sol";
 ///         The rate at the target is the centre, at zero utilisation the centre times the floor
 ///         fraction, at full utilisation the centre times one plus the full multiple; it rises with
 ///         utilisation everywhere and the slope above the target is strictly steeper than below it.
-///         Every parameter is fixed at deployment. `ratePerSecond` never reverts: the constructor
-///         asks the record, once, everything the formula will ever ask of it, and refuses a record
-///         that does not answer, so no record of another shape can be followed.
+///         Every parameter is fixed at deployment. `ratePerSecond` never reverts, whatever the record
+///         does: the constructor asks the record, once, everything the formula will ever ask of it,
+///         and refuses a record that does not answer, so no record of another shape can be followed;
+///         and afterwards the formula reads the record by guarded static calls, so a record that
+///         answered at creation and later reverts, loses its code, or answers with another width or
+///         a figure no genuine record can answer is charged as a stale record, at the resting centre,
+///         until it answers as a record again. A genuine `RateRecord` always answers.
 ///
 /// Which centre. A market charges the whole time since its last accrual at the one rate this formula
 /// answers when it is touched, and a reading delivered in between moves the record's centre. So that
@@ -105,8 +109,11 @@ contract FollowingRateFormula is IRateFormula {
         if (_read(record_, abi.encodeWithSelector(r.STALE_AFTER.selector)) != STALE_AFTER) revert BadConfig();
         // The largest product the formula forms is c * fullMultiple * (u - target) with c at most the
         // ceiling and u - target below 1e18, so ceiling * fullMultiple * 1e18 must fit; then so does
-        // ceiling * (1e18 + fullMultiple), the rate at full utilisation times 1e18.
-        if (ceiling_ == 0 || ceiling_ > type(uint256).max / WAD) revert BadConfig();
+        // ceiling * (1e18 + fullMultiple), the rate at full utilisation times 1e18. The ceiling is
+        // also kept below 2^192, as a genuine record's is, so that a centre times a span a uint64 can
+        // name fits when a span is priced piecewise across the moment the record went stale: the
+        // bound is the formula's own, not an assumption about the record.
+        if (ceiling_ == 0 || ceiling_ > type(uint192).max) revert BadConfig();
         if (fullMultiple_ > type(uint256).max / (ceiling_ * WAD)) revert BadConfig();
         // The resting centre is a centre like any other: lowered to the ceiling if above it, so that
         // the span arithmetic below stays within the bound the ceiling gives, and never nothing.
@@ -136,36 +143,59 @@ contract FollowingRateFormula is IRateFormula {
     ///      caller's last accrual when the caller answers `lastAccrual()` with a time before this
     ///      block, and the centre as it stands otherwise; with the resting centre in place of the
     ///      record's over any time after the record went stale. The ask is a static call that changes
-    ///      nothing, and a caller that does not answer it is not a fault.
+    ///      nothing, and a caller that does not answer it is not a fault. The record is read by
+    ///      guarded static calls too: a record that does not answer as a record, in this block, is
+    ///      charged as a stale one, at the resting centre, and nothing reverts.
     function _centre() internal view returns (uint256) {
         RateRecord r = RateRecord(record);
         // The clock is the chain's: the span ends at this block, and the record is stale once the
         // block is more than STALE_AFTER past the last reading's asOf.
         // forge-lint: disable-next-line(block-timestamp)
         uint256 to = block.timestamp;
-        uint256 staleAt = uint256(r.lastAsOf()) + STALE_AFTER;
+        // A last reading wider than the `asOf` a record can store is no record's answer.
+        (bool known, uint256 last) = _ask(abi.encodeWithSelector(r.lastAsOf.selector));
+        if (!known || last > type(uint64).max) return restingCentre;
+        uint256 staleAt = last + STALE_AFTER;
         (bool answered, bytes memory data) = msg.sender.staticcall(abi.encodeCall(IMarket.lastAccrual, ()));
         if (answered && data.length == 32) {
             uint256 from = abi.decode(data, (uint256));
             if (from < to) {
                 // The record is fresh: its history holds every centre over the span, the rests of
                 // silences that readings have since ended included.
-                if (to <= staleAt) return r.centreOver(from, to);
+                if (to <= staleAt) return _centreOver(from, to);
                 // A silence is open: the history ends at the last centre, and the time since the
                 // record went stale is priced here at the resting centre.
                 if (staleAt <= from) return restingCentre;
                 // The span crosses the moment the record went stale: the record's centre before it,
-                // the resting centre after it, each weighted by its length. Both are lowered to the
-                // ceiling first; a record's ceiling is below 2^192 and the span below 2^64, so the
-                // weighted sum fits.
+                // the resting centre after it, each weighted by its length. Both are at most the
+                // ceiling, which is below 2^192, and the span is below 2^64, so the weighted sum fits.
                 uint256 live = staleAt - from;
                 uint256 stale = to - staleAt;
-                uint256 before = r.centreOver(from, staleAt);
-                if (before > ceiling) before = ceiling;
+                uint256 before = _centreOver(from, staleAt);
                 return (before * live + restingCentre * stale) / (live + stale);
             }
         }
-        return to > staleAt ? restingCentre : r.centre();
+        if (to > staleAt) return restingCentre;
+        (bool stands, uint256 c) = _ask(abi.encodeWithSelector(r.centre.selector));
+        return stands ? c : restingCentre;
+    }
+
+    /// @dev The record's mean centre over the span, lowered to the ceiling; the resting centre if the
+    ///      record does not answer `centreOver` with one word.
+    function _centreOver(uint256 from, uint256 to) internal view returns (uint256) {
+        RateRecord r = RateRecord(record);
+        (bool answered, uint256 mean) = _ask(abi.encodeWithSelector(r.centreOver.selector, from, to));
+        if (!answered) return restingCentre;
+        return mean > ceiling ? ceiling : mean;
+    }
+
+    /// @dev One word asked of the record by the static call `data`: whether the record answered with
+    ///      exactly one word, and the word. A revert, an account without code, and an answer of any
+    ///      other width are all no answer.
+    function _ask(bytes memory data) internal view returns (bool answered, uint256 word) {
+        (bool ok, bytes memory answer) = record.staticcall(data);
+        if (!ok || answer.length != 32) return (false, 0);
+        return (true, abi.decode(answer, (uint256)));
     }
 
     /// @dev One word read from `record_` by the static call `data`, or `BadConfig` if the record does
