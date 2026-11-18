@@ -8,18 +8,20 @@ centre, the mean of the three leaders' average borrowing rates over the last 24 
 rate formula reads that figure on every touch of a market.
 
 The record holds no value and moves no coin. It has no owner. The only authority is the signer, and the
-signer changes only by a handover the signer itself signs, effective 72 hours later. Nobody can pause the
-record, suspend a handover, or set the centre by hand.
+signer changes only by a handover the signer itself signs, effective 72 hours later. Until a queued
+handover executes, the signer, and nobody else, may void it by a second signed instruction, so that a
+handover signed to a wrong address, or queued with a stolen key, need not complete. Nobody can pause the
+record or set the centre by hand.
 
 Every rate is a per-second rate scaled by 1e18, the unit the rate formulas use: a figure of 1e18 means
 100 percent per second.
 
 ## The instructions
 
-Both instructions are EIP-712 typed messages under the domain `AERKey`, version `1`, bound to the chain id
+All three instructions are EIP-712 typed messages under the domain `AERKey`, version `1`, bound to the chain id
 and to the record's address. A signature over anything else, or by anyone but the current signer, is
-refused. The record publishes `readingDigest(reading)` and `rotateDigest(rotate)`, the exact digests the
-signer signs; no function accepts a raw digest.
+refused. The record publishes `readingDigest(reading)`, `rotateDigest(rotate)` and `voidDigest(void)`, the
+exact digests the signer signs; no function accepts a raw digest.
 
 ### Reading
 
@@ -29,7 +31,7 @@ Reading(bytes32 id,uint64 asOf,uint256[10] deposits,uint256[10] rates,uint256 de
 
 | Field      | Meaning                                                                                   |
 | ---------- | ----------------------------------------------------------------------------------------- |
-| `id`       | A label unique across both instructions, forever. A second use is refused.                |
+| `id`       | A label unique across all instructions, forever. A second use is refused.                 |
 | `asOf`     | The moment the signer took the reading, as a Unix time.                                   |
 | `deposits` | For each of the ten candidates, in index order, the amount deposited in it. Used only to rank. |
 | `rates`    | For each candidate, its borrowing rate per second scaled by 1e18.                         |
@@ -47,12 +49,30 @@ Rotate(bytes32 id,address next,uint256 deadline)
 
 | Field      | Meaning                                                            |
 | ---------- | ------------------------------------------------------------------ |
-| `id`       | A label unique across both instructions, forever.                  |
+| `id`       | A label unique across all instructions, forever.                   |
 | `next`     | The address that becomes the signer once the handover executes.    |
 | `deadline` | The last Unix time at which the handover may be queued.            |
 
 Delivered with `submitRotate(rotate, signature)` by anyone; executed later with `executeRotate(id)` by
 anyone.
+
+### Void
+
+```
+Void(bytes32 id,bytes32 handover,uint256 deadline)
+```
+
+| Field      | Meaning                                                            |
+| ---------- | ------------------------------------------------------------------ |
+| `id`       | A label unique across all instructions, forever.                   |
+| `handover` | The `id` of the queued handover to void.                           |
+| `deadline` | The last Unix time at which the void may be delivered.             |
+
+Delivered with `submitVoid(void, signature)` by anyone, signed by the current signer. A voided handover
+can never execute; nothing else about the record changes. Nobody but the signer can void a handover,
+and nothing but execution or a void ends one: a queued handover has no expiry of its own, so a signer
+who has signed a handover to a wrong address, or whose key has been used to queue one, voids it within
+the 72 hours and, if need be, queues another.
 
 ## The checks, in order
 
@@ -84,11 +104,18 @@ A handover then passes:
 
 4. `next` is not the zero address: `ZeroAddress()`.
 
+A void then passes:
+
+4. `handover` names a queued handover: `NotQueued(handover)`.
+5. That handover is still live: `Voided(handover)` if the signer voided it before, or if another
+   handover has executed since it was queued.
+
 And `executeRotate(id)` checks:
 
 1. The id names a queued handover: `NotQueued(id)`.
-2. No other handover has executed since this one was queued: `Voided(id)`. Every handover queued before
-   the last executed one is void forever, including the executed one itself.
+2. The handover is still live: `Voided(id)` if the signer voided it, or if another handover has
+   executed since it was queued. Every handover queued before the last executed one is void forever,
+   including the executed one itself.
 3. Its delay has passed: `NotReady(readyAt)` until 72 hours after the block in which it was queued.
 
 ## What an accepted reading does
@@ -179,6 +206,7 @@ rise and the new one from the block of the rise. See "The following formula" bel
 | `readingAt(position)` | One stored reading by its sequence number (0 is the first ever): its `asOf`, rates and running sums. Refused with `NotKept(position)` once overwritten or before it is made. |
 | `readingDigest(r)`    | The digest the signer signs for a reading.                                      |
 | `rotateDigest(r)`     | The digest the signer signs for a handover.                                     |
+| `voidDigest(v)`       | The digest the signer signs for the voiding of a handover.                      |
 
 ## Every figure
 

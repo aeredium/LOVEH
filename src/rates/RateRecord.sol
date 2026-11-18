@@ -14,7 +14,9 @@ import {IRateRecord} from "../../interfaces/IRateRecord.sol";
 ///         leaders' average rates over the last 24 hours. A following rate formula reads that figure.
 ///
 /// The record holds no value and moves no coin. It has no owner: the only authority is the signer,
-/// and the signer changes only by a handover the signer itself signs, effective 72 hours later.
+/// and the signer changes only by a handover the signer itself signs, effective 72 hours later. Until
+/// a queued handover executes, the signer may void it by a second signed instruction, so that a
+/// handover to a wrong address, or one queued with a stolen key, need not complete.
 ///
 /// Averaging. Every accepted reading stores, for each candidate, the rate it states and a running
 /// sum: the sum at the previous reading plus the previous reading's rate multiplied by the seconds
@@ -57,6 +59,7 @@ contract RateRecord is IRateRecord, EIP712 {
     bytes32 internal constant READING_TYPEHASH =
         keccak256("Reading(bytes32 id,uint64 asOf,uint256[10] deposits,uint256[10] rates,uint256 deadline)");
     bytes32 internal constant ROTATE_TYPEHASH = keccak256("Rotate(bytes32 id,address next,uint256 deadline)");
+    bytes32 internal constant VOID_TYPEHASH = keccak256("Void(bytes32 id,bytes32 handover,uint256 deadline)");
 
     // ------------------------------------------------------------------ fixed at creation
 
@@ -78,11 +81,12 @@ contract RateRecord is IRateRecord, EIP712 {
     }
 
     /// @dev A queued handover. `generation` is the count of executed handovers at queueing time; a
-    ///      handover executes only while that count is unchanged.
+    ///      handover executes only while that count is unchanged and the signer has not voided it.
     struct Handover {
         address next;
         uint256 readyAt;
         uint256 generation;
+        bool voided;
     }
 
     /// @dev One change of the centre: the block's time at which it took effect, the centre from then
@@ -197,15 +201,23 @@ contract RateRecord is IRateRecord, EIP712 {
 
         _used[r.id] = true;
         uint256 readyAt = block.timestamp + ROTATE_DELAY;
-        _handovers[r.id] = Handover({next: r.next, readyAt: readyAt, generation: _executedHandovers});
+        _handovers[r.id] = Handover({next: r.next, readyAt: readyAt, generation: _executedHandovers, voided: false});
         emit SignerRotationQueued(r.id, signer, r.next, readyAt);
     }
 
     /// @inheritdoc IRateRecord
+    function submitVoid(Void calldata v, bytes calldata signature) external {
+        _verify(v.id, v.deadline, voidDigest(v), signature);
+        Handover storage h = _live(v.handover);
+
+        _used[v.id] = true;
+        h.voided = true;
+        emit SignerRotationVoided(v.id, v.handover);
+    }
+
+    /// @inheritdoc IRateRecord
     function executeRotate(bytes32 id) external {
-        Handover storage h = _handovers[id];
-        if (h.next == address(0)) revert NotQueued(id);
-        if (h.generation != _executedHandovers) revert Voided(id);
+        Handover storage h = _live(id);
         // forge-lint: disable-next-line(block-timestamp)
         if (block.timestamp < h.readyAt) revert NotReady(h.readyAt);
 
@@ -236,6 +248,11 @@ contract RateRecord is IRateRecord, EIP712 {
     /// @inheritdoc IRateRecord
     function rotateDigest(Rotate calldata r) public view returns (bytes32) {
         return _hashTypedDataV4(keccak256(abi.encode(ROTATE_TYPEHASH, r.id, r.next, r.deadline)));
+    }
+
+    /// @inheritdoc IRateRecord
+    function voidDigest(Void calldata v) public view returns (bytes32) {
+        return _hashTypedDataV4(keccak256(abi.encode(VOID_TYPEHASH, v.id, v.handover, v.deadline)));
     }
 
     // ------------------------------------------------------------------ views
@@ -284,6 +301,15 @@ contract RateRecord is IRateRecord, EIP712 {
         if (_used[id]) revert AlreadyUsed(id);
         (address recovered, ECDSA.RecoverError err,) = ECDSA.tryRecover(digest, signature);
         if (err != ECDSA.RecoverError.NoError || recovered != signer) revert BadSignature();
+    }
+
+    /// @dev The queued handover `id`, if it is still live: refused with `NotQueued` when nothing was
+    ///      queued under `id`, and with `Voided` when the signer voided it or another handover has
+    ///      executed since it was queued.
+    function _live(bytes32 id) internal view returns (Handover storage h) {
+        h = _handovers[id];
+        if (h.next == address(0)) revert NotQueued(id);
+        if (h.voided || h.generation != _executedHandovers) revert Voided(id);
     }
 
     /// @dev The three candidates with the largest deposits among those above zero, in rank order; a

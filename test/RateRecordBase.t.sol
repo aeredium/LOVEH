@@ -80,6 +80,12 @@ abstract contract RateRecordBase is Test {
         r.deadline = block.timestamp + 1 hours;
     }
 
+    function _void(bytes32 handover) internal returns (IRateRecord.Void memory v) {
+        v.id = _id();
+        v.handover = handover;
+        v.deadline = block.timestamp + 1 hours;
+    }
+
     // ------------------------------------------------------------------ signing and delivering
 
     function _sign(bytes32 digest, uint256 seed) internal pure returns (bytes memory) {
@@ -93,6 +99,10 @@ abstract contract RateRecordBase is Test {
 
     function _signRotate(IRateRecord.Rotate memory r, uint256 seed) internal view returns (bytes memory) {
         return _sign(record.rotateDigest(r), seed);
+    }
+
+    function _signVoid(IRateRecord.Void memory v, uint256 seed) internal view returns (bytes memory) {
+        return _sign(record.voidDigest(v), seed);
     }
 
     /// @dev Deliver a reading signed by the signer, from a stranger.
@@ -126,6 +136,16 @@ abstract contract RateRecordBase is Test {
         vm.prank(stranger);
         record.submitRotate(r, signature);
         return r.id;
+    }
+
+    /// @dev Void the queued handover `handover` by an instruction signed by the signer, delivered by
+    ///      a stranger.
+    function _voidRotate(bytes32 handover) internal returns (bytes32 id) {
+        IRateRecord.Void memory v = _void(handover);
+        bytes memory signature = _signVoid(v, signerSeed);
+        vm.prank(stranger);
+        record.submitVoid(v, signature);
+        return v.id;
     }
 
     // ------------------------------------------------------------------ reference arithmetic

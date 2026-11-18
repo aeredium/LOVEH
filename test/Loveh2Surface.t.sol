@@ -7,9 +7,10 @@ import {RateRecord} from "../src/rates/RateRecord.sol";
 
 /// @notice The external surface of the two LOVEH2 contracts, read from the compiled ABI: every
 ///         function is listed here on purpose with its mutability; the only state-changing functions
-///         are the three instructions of the record; no function names an owner, an admin, a pause,
+///         are the four instructions of the record; no function names an owner, an admin, a pause,
 ///         an upgrade or a role; nothing is payable; and no deployed bytecode holds SELFDESTRUCT or
-///         DELEGATECALL. The only authority is the record's signer, and it changes only by a handover.
+///         DELEGATECALL. The only authority is the record's signer, and it changes only by a handover,
+///         which the signer alone may void before it executes.
 contract Loveh2SurfaceTest is SurfaceTest {
     constructor() {
         delete contracts;
@@ -23,7 +24,7 @@ contract Loveh2SurfaceTest is SurfaceTest {
         returns (string[] memory views, string[] memory actions)
     {
         if (_eq(contractName, "RateRecord")) {
-            views = new string[](20);
+            views = new string[](21);
             // the figures fixed forever
             views[0] = "CANDIDATES";
             views[1] = "LEADERS";
@@ -45,11 +46,13 @@ contract Loveh2SurfaceTest is SurfaceTest {
             views[16] = "readingAt";
             views[17] = "readingDigest";
             views[18] = "rotateDigest";
-            views[19] = "eip712Domain";
-            actions = new string[](3);
+            views[19] = "voidDigest";
+            views[20] = "eip712Domain";
+            actions = new string[](4);
             actions[0] = "submitReading";
             actions[1] = "submitRotate";
-            actions[2] = "executeRotate";
+            actions[2] = "submitVoid";
+            actions[3] = "executeRotate";
         } else if (_eq(contractName, "FollowingRateFormula")) {
             views = new string[](6);
             views[0] = "record";
@@ -129,7 +132,7 @@ contract Loveh2SurfaceTest is SurfaceTest {
     }
 
     /// @dev No state-changing function names a term: the figures, the centre and the signer are read
-    ///      by views only, and the signer moves only through the two handover instructions.
+    ///      by views only, and the signer moves only through the three handover instructions.
     function test_noFunctionChangesAnyTerm() public view {
         string[] memory termWords = new string[](11);
         termWords[0] = "set";

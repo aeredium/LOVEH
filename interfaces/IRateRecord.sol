@@ -31,10 +31,18 @@ interface IRateRecord {
         uint256 deadline;
     }
 
+    /// @notice The voiding of the queued handover `handover`, by the current signer, before it executes.
+    struct Void {
+        bytes32 id;
+        bytes32 handover;
+        uint256 deadline;
+    }
+
     // ------------------------------------------------------------------ events
 
     event ReadingAccepted(bytes32 indexed id, uint64 asOf, uint256[3] leaders, uint256 centre);
     event SignerRotationQueued(bytes32 indexed id, address indexed current, address indexed next, uint256 readyAt);
+    event SignerRotationVoided(bytes32 indexed id, bytes32 indexed handover);
     event SignerRotated(address indexed previous, address indexed next);
 
     // ------------------------------------------------------------------ errors
@@ -64,11 +72,20 @@ interface IRateRecord {
     function submitReading(Reading calldata r, bytes calldata signature) external;
 
     /// @notice Queue a handover of the signer to `r.next`, signed by the current signer. It becomes
-    ///         executable 72 hours after this block. Nobody can cancel it.
+    ///         executable 72 hours after this block. Until it executes, the current signer may void
+    ///         it with a signed `Void`; nobody else can stop it.
     function submitRotate(Rotate calldata r, bytes calldata signature) external;
 
+    /// @notice Void the queued handover `v.handover`, signed by the current signer, so that it can
+    ///         never execute. Refused, each with its own error, when the deadline is past, the id was
+    ///         used before, the signature is not the signer's, `v.handover` names no queued handover,
+    ///         or that handover is already void: voided before, or queued before the last executed
+    ///         handover, which includes the executed one itself.
+    function submitVoid(Void calldata v, bytes calldata signature) external;
+
     /// @notice Execute a queued handover once its delay has passed. Anyone may call it. Every
-    ///         handover queued before the last executed one is void forever.
+    ///         handover queued before the last executed one is void forever, as is every handover
+    ///         the signer voided.
     function executeRotate(bytes32 id) external;
 
     // ------------------------------------------------------------------ digests
@@ -77,6 +94,8 @@ interface IRateRecord {
     function readingDigest(Reading calldata r) external view returns (bytes32);
     /// @notice The EIP-712 digest the signer signs for a handover.
     function rotateDigest(Rotate calldata r) external view returns (bytes32);
+    /// @notice The EIP-712 digest the signer signs for the voiding of a handover.
+    function voidDigest(Void calldata v) external view returns (bytes32);
 
     // ------------------------------------------------------------------ what the record answers
 
