@@ -14,7 +14,9 @@ import {Utilisation} from "./Utilisation.sol";
 ///         The rate at the target is the centre, at zero utilisation the centre times the floor
 ///         fraction, at full utilisation the centre times one plus the full multiple; it rises with
 ///         utilisation everywhere and the slope above the target is strictly steeper than below it.
-///         Every parameter is fixed at deployment. `ratePerSecond` never reverts.
+///         Every parameter is fixed at deployment. `ratePerSecond` never reverts: the constructor
+///         asks the record, once, everything the formula will ever ask of it, and refuses a record
+///         that does not answer, so no record of another shape can be followed.
 ///
 /// Which centre. A market charges the whole time since its last accrual at the one rate this formula
 /// answers when it is touched, and a reading delivered in between moves the record's centre. So that
@@ -82,7 +84,16 @@ contract FollowingRateFormula is IRateFormula {
         if (fullMultiple_ <= (WAD - floorFraction_) * (WAD - targetUtilisation_) / targetUtilisation_) {
             revert SlopeAboveNotSteeper();
         }
-        uint256 ceiling_ = RateRecord(record_).maxRate();
+        // The record must answer, with one word each, everything `ratePerSecond` will ask of it:
+        // `maxRate`, `initialCentre`, `centre`, `lastAsOf` and `centreOver`. A record of another shape
+        // is refused here, at creation, rather than left to revert every market's accrual later.
+        RateRecord r = RateRecord(record_);
+        uint256 ceiling_ = _read(record_, abi.encodeWithSelector(r.maxRate.selector));
+        uint256 resting = _read(record_, abi.encodeWithSelector(r.initialCentre.selector));
+        _read(record_, abi.encodeWithSelector(r.centre.selector));
+        _read(record_, abi.encodeWithSelector(r.lastAsOf.selector));
+        // forge-lint: disable-next-line(block-timestamp)
+        _read(record_, abi.encodeWithSelector(r.centreOver.selector, uint256(0), block.timestamp));
         // The largest product the formula forms is c * fullMultiple * (u - target) with c at most the
         // ceiling and u - target below 1e18, so ceiling * fullMultiple * 1e18 must fit; then so does
         // ceiling * (1e18 + fullMultiple), the rate at full utilisation times 1e18.
@@ -90,7 +101,6 @@ contract FollowingRateFormula is IRateFormula {
         if (fullMultiple_ > type(uint256).max / (ceiling_ * WAD)) revert BadConfig();
         // The resting centre is a centre like any other: lowered to the ceiling if above it, so that
         // the span arithmetic below stays within the bound the ceiling gives, and never nothing.
-        uint256 resting = RateRecord(record_).initialCentre();
         if (resting == 0) revert BadConfig();
         if (resting > ceiling_) resting = ceiling_;
 
@@ -143,5 +153,14 @@ contract FollowingRateFormula is IRateFormula {
             }
         }
         return to > staleAt ? restingCentre : r.centre();
+    }
+
+    /// @dev One word read from `record_` by the static call `data`, or `BadConfig` if the record does
+    ///      not answer it with exactly one word: used at creation alone, to refuse a record that is
+    ///      not shaped as a rate record.
+    function _read(address record_, bytes memory data) internal view returns (uint256) {
+        (bool answered, bytes memory answer) = record_.staticcall(data);
+        if (!answered || answer.length != 32) revert BadConfig();
+        return abi.decode(answer, (uint256));
     }
 }

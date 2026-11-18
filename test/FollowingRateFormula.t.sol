@@ -32,6 +32,48 @@ contract OddCaller {
     }
 }
 
+/// @notice Records of the wrong shape, each missing one thing the formula reads: a bare contract that
+///         answers only `maxRate()` and `initialCentre()`, one without `centreOver`, one without
+///         `lastAsOf`, and one whose `centreOver` answers with the wrong width.
+contract BareRecord {
+    uint256 public maxRate;
+    uint256 public initialCentre;
+
+    constructor(uint256 maxRate_) {
+        maxRate = maxRate_;
+        initialCentre = maxRate_;
+    }
+}
+
+contract RecordWithoutCentreOver is BareRecord {
+    uint256 public centre;
+    uint64 public lastAsOf;
+
+    constructor(uint256 maxRate_) BareRecord(maxRate_) {
+        centre = maxRate_;
+    }
+}
+
+contract RecordWithoutLastAsOf is BareRecord {
+    uint256 public centre;
+
+    constructor(uint256 maxRate_) BareRecord(maxRate_) {
+        centre = maxRate_;
+    }
+
+    function centreOver(uint256, uint256) external view returns (uint256) {
+        return centre;
+    }
+}
+
+contract RecordWithAWideCentreOver is RecordWithoutCentreOver {
+    constructor(uint256 maxRate_) RecordWithoutCentreOver(maxRate_) {}
+
+    function centreOver(uint256, uint256) external view returns (uint256, uint256) {
+        return (centre, centre);
+    }
+}
+
 contract FollowingRateFormulaTest is RateRecordBase {
     uint256 internal constant TARGET = 0.8e18;
     uint256 internal constant FLOOR = 0.5e18;
@@ -119,6 +161,40 @@ contract FollowingRateFormulaTest is RateRecordBase {
         mock.setInitialCentre(0);
         vm.expectRevert(FollowingRateFormula.BadConfig.selector);
         new FollowingRateFormula(address(mock), TARGET, FLOOR, FULL);
+    }
+
+    /// @dev Security reading finding 4. The constructor once checked the record by `maxRate()` alone,
+    ///      so a contract of another shape passed creation and `ratePerSecond` reverted for every
+    ///      market on the formula. Now the constructor asks the record everything the formula will
+    ///      ask, once, and refuses a record that does not answer each with one word.
+    function test_constructor_refusesARecordThatDoesNotAnswerAsARecord() public {
+        BareRecord bare = new BareRecord(MAX_RATE);
+        vm.expectRevert(FollowingRateFormula.BadConfig.selector);
+        new FollowingRateFormula(address(bare), TARGET, FLOOR, FULL);
+
+        RecordWithoutCentreOver noCentreOver = new RecordWithoutCentreOver(MAX_RATE);
+        vm.expectRevert(FollowingRateFormula.BadConfig.selector);
+        new FollowingRateFormula(address(noCentreOver), TARGET, FLOOR, FULL);
+
+        RecordWithoutLastAsOf noLastAsOf = new RecordWithoutLastAsOf(MAX_RATE);
+        vm.expectRevert(FollowingRateFormula.BadConfig.selector);
+        new FollowingRateFormula(address(noLastAsOf), TARGET, FLOOR, FULL);
+
+        RecordWithAWideCentreOver wide = new RecordWithAWideCentreOver(MAX_RATE);
+        vm.expectRevert(FollowingRateFormula.BadConfig.selector);
+        new FollowingRateFormula(address(wide), TARGET, FLOOR, FULL);
+
+        // An account without code answers nothing at all.
+        vm.expectRevert(FollowingRateFormula.BadConfig.selector);
+        new FollowingRateFormula(stranger, TARGET, FLOOR, FULL);
+
+        // A record that answers everything is accepted, and a market on it is answered over its span.
+        MockRateRecord mock = new MockRateRecord(MAX_RATE, R);
+        FollowingRateFormula f = new FollowingRateFormula(address(mock), TARGET, FLOOR, FULL);
+        AccruingCaller caller = new AccruingCaller();
+        caller.accrueAt(T0 - 1 days);
+        assertEq(caller.rate(f, 80, 100), R);
+        assertEq(f.ratePerSecond(80, 100), R);
     }
 
     // ------------------------------------------------------------------ shape (4, 8.13)

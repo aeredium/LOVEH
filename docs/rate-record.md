@@ -236,7 +236,11 @@ once at creation, if ever above it) and answers, with `u` the utilisation and ev
 
 So the rate at the target is exactly the centre, at zero utilisation the centre times the floor fraction,
 at full utilisation the centre times one plus the full multiple; it rises with utilisation everywhere,
-and the slope above the target is strictly steeper than below it. `ratePerSecond` never reverts.
+and the slope above the target is strictly steeper than below it. `ratePerSecond` never reverts. The
+formula reads five things of its record, `maxRate`, `initialCentre`, `centre`, `lastAsOf` and
+`centreOver`, and its constructor asks each of them once and refuses, with `BadConfig()`, a record that
+does not answer every one with a single word; so a contract of another shape cannot be made the record,
+and the promise holds over every record a formula can be created on.
 
 Which centre `c` is: the formula asks its caller for `lastAccrual()`, which every market answers, by a
 static call that changes nothing. When the caller answers with a time before the block, `c` is the
@@ -283,7 +287,7 @@ touch of the market during it, and anyone may give one: `accrue()` on any market
 
 | Figure              | Rule                                                       | Kind                                                   |
 | ------------------- | ---------------------------------------------------------- | ------------------------------------------------------ |
-| `record`            | a rate record, not zero                                    | Set at creation; `ZeroRecord()`                        |
+| `record`            | not zero; answers `maxRate`, `initialCentre`, `centre`, `lastAsOf` and `centreOver`, each with one word, when asked at creation | Set at creation; `ZeroRecord()`, `BadConfig()` |
 | `ceiling`           | the record's `maxRate`, read once                          | Set at creation; `BadConfig()` if zero or too wide     |
 | `restingCentre`     | the record's `initialCentre`, read once, lowered to the ceiling if above it | Set at creation; `BadConfig()` if zero |
 | `STALE_AFTER`       | 7 days; past it, by the last reading's `asOf`, the resting centre is charged | Constant                            |
