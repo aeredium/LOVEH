@@ -10,8 +10,8 @@ rate formula reads that figure on every touch of a market.
 The record holds no value and moves no coin. It has no owner. The only authority is the signer, and the
 signer changes only by a handover the signer itself signs, effective 72 hours later. Until a queued
 handover executes, the signer, and nobody else, may void it by a second signed instruction, so that a
-handover signed to a wrong address, or queued with a stolen key, need not complete. Nobody can pause the
-record or set the centre by hand.
+handover signed to a wrong address need not complete. A void does not recover the record from a stolen
+key (see "Void" below). Nobody can pause the record or set the centre by hand.
 
 Every rate is a per-second rate scaled by 1e18, the unit the rate formulas use: a figure of 1e18 means
 100 percent per second.
@@ -71,8 +71,18 @@ Void(bytes32 id,bytes32 handover,uint256 deadline)
 Delivered with `submitVoid(void, signature)` by anyone, signed by the current signer. A voided handover
 can never execute; nothing else about the record changes. Nobody but the signer can void a handover,
 and nothing but execution or a void ends one: a queued handover has no expiry of its own, so a signer
-who has signed a handover to a wrong address, or whose key has been used to queue one, voids it within
-the 72 hours and, if need be, queues another.
+who has signed a handover to a wrong address voids it within the 72 hours and, if need be, queues
+another.
+
+What a void does not do: it does not recover the record from a stolen key. A void is signed by the
+same key as a handover, and it takes effect at once while a handover waits 72 hours. So whoever holds
+a copy of the signer's key sees every handover the rightful signer queues and can void it within the
+three days, every time; the rightful signer can do the same to the thief's. The outcome is a standing
+stalemate: the signer never changes, and the thief keeps signing readings, which the record accepts
+up to `maxRate`. The record offers nothing against that, by design: it has no second authority and no
+owner. What bounds the harm of a stolen key is outside the record: the formula's ceiling and its
+resting centre, and the markets' own terms. `test_void_doesNotRecoverARecordFromAStolenKey` in
+`test/RateRecordRotation.t.sol` shows the stalemate.
 
 ## The checks, in order
 

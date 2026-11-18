@@ -210,24 +210,62 @@ contract RateRecordRotationTest is RateRecordBase {
         assertEq(record.signer(), next);
     }
 
-    /// @dev The holder of a stolen key queues a handover to itself; the signer voids it and hands
-    ///      over to a fresh key instead, and the stolen key is shut out once that executes.
-    function test_void_rescuesFromAStolenKey() public {
+    /// @dev Security reading finding 2 (third reading). This test once claimed that the void rescues
+    ///      the record from a stolen key; it passed only because its thief never signed a void. A void
+    ///      is signed by the same key as a handover and takes effect at once, while a handover waits
+    ///      72 hours, so whoever holds a copy of the key voids every rescue the rightful signer queues,
+    ///      and the rightful signer every handover of the thief's: a standing stalemate in which the
+    ///      signer never changes and the thief keeps signing readings. The void stops a handover to a
+    ///      wrong address (the test above); it does not recover a record from a stolen key, and the
+    ///      documents now say so.
+    function test_void_doesNotRecoverARecordFromAStolenKey() public {
+        // The thief holds a copy of the signer's key: `signerSeed` signs for both. The thief queues a
+        // handover to itself; the rightful signer voids it and queues a rescue to a fresh key.
         address thief = other;
         bytes32 theft = _queueRotate(thief);
         vm.warp(T0 + 30 minutes);
         _voidRotate(theft);
         bytes32 rescue = _queueRotate(next);
 
-        vm.warp(T0 + 72 hours);
+        // The thief, with the same key, voids the rescue long before it is ready.
+        vm.warp(T0 + 1 days);
+        IRateRecord.Void memory v = _void(rescue);
+        bytes memory sig = _signVoid(v, signerSeed);
         vm.prank(thief);
+        record.submitVoid(v, sig);
+
+        vm.warp(T0 + 72 hours + 30 minutes);
         vm.expectRevert(abi.encodeWithSelector(IRateRecord.Voided.selector, theft));
         record.executeRotate(theft);
-        vm.warp(T0 + 72 hours + 30 minutes);
+        vm.expectRevert(abi.encodeWithSelector(IRateRecord.Voided.selector, rescue));
         record.executeRotate(rescue);
-        assertEq(record.signer(), next);
-        _expectReadingRefused(block.timestamp, signerSeed);
-        _submitSigned(block.timestamp, nextSeed);
+        assertEq(record.signer(), signer, "the rescue did not complete: the signer is still the stolen key");
+        // The thief's readings are still accepted, and the fresh key's are not.
+        _submitSigned(block.timestamp, signerSeed);
+        _expectReadingRefused(block.timestamp, nextSeed);
+
+        // Every further rescue is voided the same way, and every further theft too: the stalemate
+        // stands for as long as both hold the key.
+        for (uint256 round = 0; round < 3; ++round) {
+            uint256 start = block.timestamp;
+            bytes32 rescueAgain = _queueRotate(next);
+            bytes32 theftAgain = _queueRotate(thief);
+            vm.warp(start + 71 hours);
+            v = _void(rescueAgain);
+            sig = _signVoid(v, signerSeed);
+            vm.prank(thief);
+            record.submitVoid(v, sig);
+            _voidRotate(theftAgain);
+            vm.warp(start + 72 hours);
+            vm.expectRevert(abi.encodeWithSelector(IRateRecord.Voided.selector, rescueAgain));
+            record.executeRotate(rescueAgain);
+            vm.expectRevert(abi.encodeWithSelector(IRateRecord.Voided.selector, theftAgain));
+            record.executeRotate(theftAgain);
+            assertEq(record.signer(), signer);
+        }
+        _submitSigned(block.timestamp, signerSeed);
+        _expectReadingRefused(block.timestamp, nextSeed);
+        assertEq(record.readingCount(), 2);
     }
 
     /// @dev A handover may be voided at any time before it executes, including after its delay.

@@ -16,7 +16,11 @@ import {IRateRecord} from "../../interfaces/IRateRecord.sol";
 /// The record holds no value and moves no coin. It has no owner: the only authority is the signer,
 /// and the signer changes only by a handover the signer itself signs, effective 72 hours later. Until
 /// a queued handover executes, the signer may void it by a second signed instruction, so that a
-/// handover to a wrong address, or one queued with a stolen key, need not complete.
+/// handover to a wrong address need not complete. A void does not recover the record from a stolen
+/// key: the void is signed by the same key as the handover and takes effect at once, so whoever holds
+/// a copy of the key can void every handover the other holder queues, the rightful signer's rescue
+/// included, and go on signing readings. Against a stolen key the remedy is outside the record: the
+/// markets that follow it, and the formula that bounds what a reading can charge.
 ///
 /// Averaging. Every accepted reading stores, for each candidate, the rate it states and a running
 /// sum: the sum at the previous reading plus the previous reading's rate multiplied by the seconds
