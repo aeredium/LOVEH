@@ -41,10 +41,10 @@ import {Utilisation} from "./Utilisation.sol";
 /// centre charged is the resting centre, the record's `initialCentre` read once at creation, until a
 /// reading is accepted again. Over a span that crosses the moment the record went stale, the time
 /// before it is charged at the record's centre and the time after it at the resting centre, each
-/// weighted by its length. The formula knows only the last reading's `asOf`, so a silence that
-/// readings have since ended is invisible to it: a market untouched across one is charged the
-/// record's centre over its whole span. A touch of the market during the silence, which anyone may
-/// give through `accrue()`, fixes the resting centre over the time so far.
+/// weighted by its length. The formula prices the silence itself only while it is open; a reading
+/// that ends one writes the rest into the record's history (the record's `STALE_AFTER`, the same
+/// figure, read at creation and refused if it differs), so a market untouched across a silence that
+/// has ended is charged, through `centreOver`, exactly what it would have been charged during it.
 contract FollowingRateFormula is IRateFormula {
     error ZeroRecord();
     error InvalidTarget();
@@ -56,7 +56,9 @@ contract FollowingRateFormula is IRateFormula {
     uint256 internal constant WAD = 1e18;
 
     /// @notice How long after the last accepted reading's `asOf` the record's centre is still charged;
-    ///         past it, the resting centre is charged until a reading is accepted again.
+    ///         past it, the resting centre is charged until a reading is accepted again. The record's
+    ///         own `STALE_AFTER` is the same figure: it is where the record writes the rest into its
+    ///         history, and a record whose figure differs is refused at creation.
     uint256 public constant STALE_AFTER = 7 days;
 
     /// @notice The rate record whose centre this formula follows.
@@ -94,6 +96,10 @@ contract FollowingRateFormula is IRateFormula {
         _read(record_, abi.encodeWithSelector(r.lastAsOf.selector));
         // forge-lint: disable-next-line(block-timestamp)
         _read(record_, abi.encodeWithSelector(r.centreOver.selector, uint256(0), block.timestamp));
+        // The record rests its history at its own staleness figure; the formula prices an open silence
+        // at this one. The two must be the same figure, or a silence would be priced twice over or
+        // not at all across the moment a reading ends it.
+        if (_read(record_, abi.encodeWithSelector(r.STALE_AFTER.selector)) != STALE_AFTER) revert BadConfig();
         // The largest product the formula forms is c * fullMultiple * (u - target) with c at most the
         // ceiling and u - target below 1e18, so ceiling * fullMultiple * 1e18 must fit; then so does
         // ceiling * (1e18 + fullMultiple), the rate at full utilisation times 1e18.
@@ -139,8 +145,12 @@ contract FollowingRateFormula is IRateFormula {
         if (answered && data.length == 32) {
             uint256 from = abi.decode(data, (uint256));
             if (from < to) {
-                if (staleAt <= from) return restingCentre;
+                // The record is fresh: its history holds every centre over the span, the rests of
+                // silences that readings have since ended included.
                 if (to <= staleAt) return r.centreOver(from, to);
+                // A silence is open: the history ends at the last centre, and the time since the
+                // record went stale is priced here at the resting centre.
+                if (staleAt <= from) return restingCentre;
                 // The span crosses the moment the record went stale: the record's centre before it,
                 // the resting centre after it, each weighted by its length. Both are lowered to the
                 // ceiling first; a record's ceiling is below 2^192 and the span below 2^64, so the

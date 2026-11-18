@@ -3,13 +3,15 @@ pragma solidity 0.8.28;
 
 /// @notice A stand-in for a rate record in tests of the following formula: answers a settable highest
 ///         rate, a settable centre (over any span too), a settable time of its last reading (this
-///         block at creation, so that it starts fresh) and an initial centre, with no checks, so the
-///         formula's own guards can be exercised.
+///         block at creation, so that it starts fresh), an initial centre and a settable staleness
+///         figure (the record's at creation), with no checks, so the formula's own guards can be
+///         exercised.
 contract MockRateRecord {
     uint256 public maxRate;
     uint256 public centre;
     uint256 public initialCentre;
     uint64 public lastAsOf;
+    uint256 public STALE_AFTER = 7 days;
 
     constructor(uint256 maxRate_, uint256 centre_) {
         maxRate = maxRate_;
@@ -34,6 +36,10 @@ contract MockRateRecord {
 
     function setLastAsOf(uint64 value) external {
         lastAsOf = value;
+    }
+
+    function setStaleAfter(uint256 value) external {
+        STALE_AFTER = value;
     }
 
     /// @dev The centre, whatever the span: the stand-in keeps no history.

@@ -74,6 +74,15 @@ contract RecordWithAWideCentreOver is RecordWithoutCentreOver {
     }
 }
 
+/// @notice A record of the old shape: everything but the staleness figure.
+contract RecordWithoutStaleAfter is RecordWithoutCentreOver {
+    constructor(uint256 maxRate_) RecordWithoutCentreOver(maxRate_) {}
+
+    function centreOver(uint256, uint256) external view returns (uint256) {
+        return centre;
+    }
+}
+
 contract FollowingRateFormulaTest is RateRecordBase {
     uint256 internal constant TARGET = 0.8e18;
     uint256 internal constant FLOOR = 0.5e18;
@@ -110,6 +119,7 @@ contract FollowingRateFormulaTest is RateRecordBase {
         assertEq(formula.ceiling(), MAX_RATE, "the ceiling is the record's highest rate, read at creation");
         assertEq(formula.restingCentre(), INITIAL_CENTRE, "the resting centre is the record's initial centre");
         assertEq(formula.STALE_AFTER(), 7 days);
+        assertEq(formula.STALE_AFTER(), record.STALE_AFTER(), "the record rests its history at the same figure");
         assertEq(formula.targetUtilisation(), TARGET);
         assertEq(formula.floorFraction(), FLOOR);
         assertEq(formula.fullMultiple(), FULL);
@@ -184,12 +194,26 @@ contract FollowingRateFormulaTest is RateRecordBase {
         vm.expectRevert(FollowingRateFormula.BadConfig.selector);
         new FollowingRateFormula(address(wide), TARGET, FLOOR, FULL);
 
+        RecordWithoutStaleAfter noStaleAfter = new RecordWithoutStaleAfter(MAX_RATE);
+        vm.expectRevert(FollowingRateFormula.BadConfig.selector);
+        new FollowingRateFormula(address(noStaleAfter), TARGET, FLOOR, FULL);
+
         // An account without code answers nothing at all.
         vm.expectRevert(FollowingRateFormula.BadConfig.selector);
         new FollowingRateFormula(stranger, TARGET, FLOOR, FULL);
 
-        // A record that answers everything is accepted, and a market on it is answered over its span.
+        // A record that answers everything but rests its history at another figure than the formula
+        // prices an open silence at is refused: the two must be the same figure.
         MockRateRecord mock = new MockRateRecord(MAX_RATE, R);
+        mock.setStaleAfter(7 days - 1);
+        vm.expectRevert(FollowingRateFormula.BadConfig.selector);
+        new FollowingRateFormula(address(mock), TARGET, FLOOR, FULL);
+        mock.setStaleAfter(7 days + 1);
+        vm.expectRevert(FollowingRateFormula.BadConfig.selector);
+        new FollowingRateFormula(address(mock), TARGET, FLOOR, FULL);
+        mock.setStaleAfter(7 days);
+
+        // A record that answers everything is accepted, and a market on it is answered over its span.
         FollowingRateFormula f = new FollowingRateFormula(address(mock), TARGET, FLOOR, FULL);
         AccruingCaller caller = new AccruingCaller();
         caller.accrueAt(T0 - 1 days);
@@ -483,6 +507,78 @@ contract FollowingRateFormulaTest is RateRecordBase {
         uint256 before = record.centreOver(T0, staleAt);
         assertEq(before, (1 days * R + 7 days * 3 * R) / 8 days);
         assertEq(caller.rate(formula, 80, 100), (before * 8 days + 1 days * R) / 9 days);
+    }
+
+    /// @dev Security reading finding 1 (third reading). Before the fix the formula knew staleness only
+    ///      as the last reading's `asOf` plus a week, read at the moment of the call, so a reading that
+    ///      ended a silence made the record fresh again and a caller untouched across the silence was
+    ///      charged the record's stored centre over the whole of it: twenty days at the spike where a
+    ///      call one block earlier would have charged a week at the spike and thirteen days at rest.
+    ///      Now the record writes the rest into its history when a reading ends a silence, so the
+    ///      charge is the same whether the caller is touched before or after the reading.
+    function test_stale_silenceEndedByAReadingIsNotRePriced() public {
+        AccruingCaller untouched = new AccruingCaller();
+        AccruingCaller touchedDuring = new AccruingCaller();
+        _setCentre(3 * R);
+        uint256 step = block.timestamp;
+        untouched.accrueAt(step);
+        uint256 staleAt = record.lastAsOf() + 7 days;
+        assertEq(staleAt, step + 7 days);
+        touchedDuring.accrueAt(staleAt + 2 days);
+
+        // Twenty days on, with the silence still open: a week at 3R and thirteen days at rest.
+        vm.warp(step + 20 days);
+        uint256 mean = (7 days * 3 * R + 13 days * R) / 20 days;
+        assertEq(untouched.rate(formula, 80, 100), mean, "while the silence is open");
+        assertEq(touchedDuring.rate(formula, 80, 100), R, "touched during the silence: at rest since");
+
+        // A reading ends the silence in this block, before either caller is touched. Nothing they are
+        // charged changes: the rest is in the record's history now.
+        _submitAt(block.timestamp, _uniform(3 * R));
+        assertEq(record.centre(), 3 * R);
+        assertEq(record.lastAsOf(), block.timestamp, "fresh again");
+        assertEq(formula.ratePerSecond(80, 100), 3 * R, "a direct quote: the centre as it stands");
+        assertEq(untouched.rate(formula, 80, 100), mean, "the silence is priced as it was while open");
+        assertEq(touchedDuring.rate(formula, 80, 100), R, "and so is the time since a touch inside it");
+        assertEq(untouched.rate(formula, 100, 100), mean * (WAD + FULL) / WAD);
+        assertEq(untouched.rate(formula, 40, 100), _expected(mean, 0.4e18));
+
+        // From the resumption on, the record's centre is charged: a day later the untouched caller's
+        // span holds the week at 3R, the thirteen days at rest and a day at 3R.
+        vm.warp(block.timestamp + 1 days);
+        assertEq(untouched.rate(formula, 80, 100), (8 days * 3 * R + 13 days * R) / 21 days);
+        assertEq(touchedDuring.rate(formula, 80, 100), (11 days * R + 1 days * 3 * R) / 12 days);
+        // A caller accrued at the resumption itself sees only the new centre.
+        AccruingCaller afterwards = new AccruingCaller();
+        afterwards.accrueAt(block.timestamp - 1 days);
+        assertEq(afterwards.rate(formula, 80, 100), 3 * R);
+    }
+
+    /// @dev The same with a dead centre below the resting one: the loss would be the lenders'. A
+    ///      silence that a reading ends is priced at rest as it was while open, whether or not the
+    ///      resuming reading moves the centre.
+    function test_stale_silenceEndedByAReadingIsNotRePricedFromBelowEither() public {
+        AccruingCaller untouched = new AccruingCaller();
+        _setCentre(R / 5);
+        uint256 step = block.timestamp;
+        untouched.accrueAt(step);
+        vm.warp(step + 20 days);
+        uint256 mean = (7 days * (R / 5) + 13 days * R) / 20 days;
+        assertEq(untouched.rate(formula, 80, 100), mean);
+        // The resuming reading states 3R: the silence counts at the last stated rates, so the centre
+        // does not move at once, but the record is fresh and the silence is rested in its history.
+        _submitAt(block.timestamp, _uniform(3 * R));
+        assertEq(record.centre(), R / 5);
+        assertEq(untouched.rate(formula, 80, 100), mean, "not re-priced at the dead centre");
+        assertGt(untouched.rate(formula, 80, 100), R / 5, "the lenders are not charged for the silence at it");
+        // A day later the readings have moved the centre to 3R from that block.
+        _submitAt(block.timestamp + 24 hours, _uniform(3 * R));
+        assertEq(record.centre(), 3 * R);
+        vm.warp(block.timestamp + 1 days);
+        assertEq(
+            untouched.rate(formula, 80, 100),
+            (7 days * (R / 5) + 13 days * R + 1 days * (R / 5) + 1 days * 3 * R) / 22 days
+        );
     }
 
     /// @dev The mock's clock: a stand-in that answers a last reading in the past is at rest like the

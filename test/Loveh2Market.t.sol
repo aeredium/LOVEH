@@ -385,11 +385,13 @@ contract Loveh2MarketTest is RateRecordBase {
         assertEq(record.centre(), MAX_RATE, "the record itself is unchanged");
 
         // The market, untouched for twenty days, is charged the spike for the week and the resting
-        // centre for the thirteen days after it: nobody is charged a dead reading for ever.
+        // centre for the thirteen days after it: nobody is charged a dead reading for ever. (The
+        // interest so far is read before the clock moves: the view already prices the pending span.)
+        vm.warp(t2);
+        uint256 interestBefore = market.totalInterest();
         vm.warp(t2 + 20 days);
         uint256 mean = (7 days * MAX_RATE + 13 days * R5) / 20 days;
         uint256 rate = _shape(mean, u);
-        uint256 interestBefore = market.totalInterest();
         assertEq(market.loans(), loansBefore + loansBefore * (rate * 20 days) / WAD, "the view prices the span too");
         market.accrue();
         assertEq(
@@ -412,8 +414,76 @@ contract Loveh2MarketTest is RateRecordBase {
         depositsBefore = market.deposits();
         u = Utilisation.compute(loansBefore, depositsBefore);
         assertEq(formula.ratePerSecond(loansBefore, depositsBefore), _shape(MAX_RATE, u), "fresh again");
-        skip(1 days);
         interestBefore = market.totalInterest();
+        skip(1 days);
+        market.accrue();
+        assertEq(market.totalInterest() - interestBefore, loansBefore * (_shape(MAX_RATE, u) * 1 days) / WAD);
+    }
+
+    /// @dev Security reading finding 1 (third reading). The test above touches the market before the
+    ///      reading that ends the silence. Before the fix, a market left untouched across the silence
+    ///      was charged otherwise: the resuming reading made the record fresh again, the formula
+    ///      could no longer see the silence, and the whole twenty days were charged at the spike,
+    ///      where the same market touched one block earlier would have been charged a week at the
+    ///      spike and thirteen days at rest. Whoever delivered the reading first chose which. Now the
+    ///      record rests its history when a reading ends a silence, and the market's charge is the
+    ///      same whether it is touched before the reading or after it.
+    function test_silence_endedByAReadingIsNotRePricedForAnUntouchedMarket() public {
+        _fund(loan, lender, 1000e18);
+        vm.prank(lender);
+        market.deposit(1000e18, lender);
+        _fund(coll, borrower, 1e18);
+        vm.prank(borrower);
+        market.depositCollateral(1e18, borrower);
+        vm.prank(borrower);
+        market.borrow(800e18, borrower);
+
+        // The spike, then the market's last touch, then silence.
+        _submitAt(block.timestamp, _uniform(MAX_RATE));
+        skip(24 hours);
+        _submitAt(block.timestamp, _uniform(MAX_RATE));
+        assertEq(record.centre(), MAX_RATE);
+        market.accrue();
+        uint256 t2 = block.timestamp;
+        uint256 loansBefore = market.loans();
+        uint256 depositsBefore = market.deposits();
+        uint256 u = Utilisation.compute(loansBefore, depositsBefore);
+        uint256 interestBefore = market.totalInterest();
+
+        // Twenty days on, the silence still open: the market's view prices a week at the spike and
+        // thirteen days at rest.
+        vm.warp(t2 + 20 days);
+        uint256 mean = (7 days * MAX_RATE + 13 days * R5) / 20 days;
+        uint256 charge = loansBefore * (_shape(mean, u) * 20 days) / WAD;
+        assertEq(market.loans(), loansBefore + charge, "the view, with the silence open");
+        assertEq(market.loanOf(borrower), market.loans());
+
+        // A stranger delivers the reading that ends the silence before anyone touches the market.
+        // The record is fresh again; the market's charge is what it was one block earlier.
+        _submitAt(block.timestamp, _uniform(MAX_RATE));
+        assertEq(record.centre(), MAX_RATE);
+        assertEq(record.lastAsOf(), block.timestamp, "fresh again");
+        assertEq(market.lastAccrual(), t2, "untouched throughout");
+        assertEq(market.loans(), loansBefore + charge, "the view, with the silence ended: the same");
+        assertEq(market.loanOf(borrower), loansBefore + charge);
+        vm.prank(stranger);
+        market.accrue();
+        assertEq(
+            market.totalInterest() - interestBefore, charge, "a week at the spike, thirteen days at rest, as while open"
+        );
+        assertLt(
+            market.totalInterest() - interestBefore,
+            loansBefore * (_shape(MAX_RATE, u) * 20 days) / WAD / 2,
+            "not twenty days at the spike"
+        );
+        assertEq(market.unlent() + market.loans(), market.deposits() + market.feeOwed(), "identity");
+
+        // From the resumption on, the spike is charged again, from the block of its delivery.
+        loansBefore = market.loans();
+        depositsBefore = market.deposits();
+        u = Utilisation.compute(loansBefore, depositsBefore);
+        interestBefore = market.totalInterest();
+        skip(1 days);
         market.accrue();
         assertEq(market.totalInterest() - interestBefore, loansBefore * (_shape(MAX_RATE, u) * 1 days) / WAD);
     }

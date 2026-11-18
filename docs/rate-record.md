@@ -146,8 +146,9 @@ sums divided by the window's length.
 Because a stated rate counts forward, a stretch of silence counts at the last stated rates, not at the
 rates the next reading brings. And because the centre is a stored value, it never depends on the clock:
 with no new reading for any length of time, the centre stays what it is. What a market is charged
-during such a silence is bounded by the following formula, not by the record: see "A stale record"
-under "The following formula" below.
+during such a silence is bounded by the following formula while the silence is open, and by the rest
+the record writes into its history once a reading ends it: see "A silence in the history" and "A stale
+record" below.
 
 ### A worked example
 
@@ -190,6 +191,25 @@ before the record's creation is not counted: a `from` earlier than that is raise
 span of no length, or one ending before it starts, answers the centre in force at `to`. The answer
 depends on nothing but the stored history and the two arguments; it never depends on the block.
 
+### A silence in the history
+
+The stored centre does not rest: readings move it and silence leaves it as it is. But the following
+formula charges it only until the last reading's `asOf` is `STALE_AFTER` (7 days) old, and the initial
+centre, the resting centre, after that. So that a reading which ends a silence cannot re-price the
+silence, the rest is written into the history before the reading is. A reading accepted in a block
+more than `STALE_AFTER` after the last accepted `asOf` first checkpoints the initial centre at the
+moment the record went stale, `lastAsOf + STALE_AFTER`, and then, if the centre it computes differs,
+checkpoints that centre at its own block. The moment of the rest is never before the last checkpoint,
+which is at most `MAX_AGE` (an hour) after the last `asOf`; the moment is fixed by the last reading's
+`asOf` and the block of delivery, not by the resuming reading's `asOf`, which may be a little before
+it. A reading delivered at the moment itself ends no silence. A stored centre that is the initial
+centre already rests at nothing, and no checkpoint is made.
+
+So `centreOver` over a span across a silence that a reading has since ended answers exactly what the
+formula charged while the silence was open: the stored centre up to the moment of staleness, the
+initial centre from then to the block of the resuming reading, and that reading's centre after it. A
+silence still open is not in the history; the formula prices it itself (see "A stale record" below).
+
 The following formula reads `centreOver(lastAccrual, now)` for the market that asks it, so a market
 untouched for a week during which the centre rose is charged the old centre for the time before the
 rise and the new one from the block of the rise. See "The following formula" below.
@@ -199,7 +219,7 @@ rise and the new one from the block of the rise. See "The following formula" bel
 | Function              | Answer                                                                          |
 | --------------------- | ------------------------------------------------------------------------------- |
 | `centre()`            | The stored centre. Never reverts; never depends on the clock.                   |
-| `centreOver(from, to)` | The mean of the centre over the span, weighted by time, from the checkpoints of its changes; the centre in force at `to` for a span of no length. Depends only on the history and its arguments. |
+| `centreOver(from, to)` | The mean of the centre over the span, weighted by time, from the checkpoints of its changes and of the rests of silences that readings have ended; the centre in force at `to` for a span of no length. Depends only on the history and its arguments. |
 | `leaders()`           | The three leaders' indexes, in rank order, from the last accepted reading.      |
 | `lastAsOf()`          | `asOf` of the last accepted reading; zero before any.                           |
 | `readingCount()`      | How many readings have been accepted.                                           |
@@ -221,6 +241,7 @@ rise and the new one from the block of the rise. See "The following formula" bel
 | `MAX_AGE`        | 1 hour                     | Constant; the greatest age of a reading at delivery          |
 | `HISTORY`        | 64 readings                | Constant; `HISTORY × MIN_INTERVAL` exceeds `WINDOW`, asserted at creation |
 | `ROTATE_DELAY`   | 72 hours                   | Constant                                                    |
+| `STALE_AFTER`    | 7 days                     | Constant; the moment after the last `asOf` at which the record is stale and a reading that ends the silence rests the history; the formula's figure, which must be the same |
 | `candidates`     | ten non-zero, distinct labels | Set at creation; refused with `BadConfig()` otherwise    |
 | `maxRate`        | above zero, below 2^192    | Set at creation; refused with `BadConfig()` otherwise. The bound keeps every running sum below 2^256 over any span a 64-bit `asOf` can name |
 | `initialCentre`  | above zero, at most `maxRate` | Set at creation; refused with `BadConfig()` otherwise    |
@@ -240,7 +261,10 @@ and the slope above the target is strictly steeper than below it. `ratePerSecond
 formula reads five things of its record, `maxRate`, `initialCentre`, `centre`, `lastAsOf` and
 `centreOver`, and its constructor asks each of them once and refuses, with `BadConfig()`, a record that
 does not answer every one with a single word; so a contract of another shape cannot be made the record,
-and the promise holds over every record a formula can be created on.
+and the promise holds over every record a formula can be created on. The constructor also reads the
+record's `STALE_AFTER` and refuses, with `BadConfig()`, a record whose figure is not the formula's own:
+the record rests its history at that moment and the formula prices an open silence from it, and the two
+must agree.
 
 Which centre `c` is: the formula asks its caller for `lastAccrual()`, which every market answers, by a
 static call that changes nothing. When the caller answers with a time before the block, `c` is the
@@ -280,17 +304,24 @@ initial centre, the very figure the record answers before its second reading, so
 Seven days is long enough for a lost signer to be replaced by a handover (72 hours) and for the new
 signer's readings to begin, and short enough that no dead reading is charged for more than a week.
 
-One limit: the formula knows only the last reading's `asOf`, so once readings have resumed it cannot
-see a silence that has ended. A market untouched across such a silence is charged the record's mean
-centre over its whole span, the silence included. What fixes the resting centre over a silence is a
-touch of the market during it, and anyone may give one: `accrue()` on any market is open to all.
+A silence that has ended. The formula prices a silence itself only while it is open, from the last
+reading's `asOf`. Once a reading has resumed, `lastAsOf` has moved on and the formula can no longer
+see the silence; what it sees instead is the record's history, into which the resuming reading wrote
+the rest (see "A silence in the history" above). So a market untouched across a silence that a
+reading has ended is charged, through `centreOver`, the record's centre up to the moment of
+staleness, the resting centre from then to the block of the resuming reading, and the record's centre
+again after it: exactly what it would have been charged had it been touched one block before the
+reading. Nobody re-prices a silence by delivering the reading that ends it, and no touch of the
+market during the silence is needed to fix the rest. (The formula's resting centre is the record's
+`initialCentre` lowered to the ceiling, and the record rests at `initialCentre` itself; a record's
+`initialCentre` is at most its `maxRate`, the ceiling, so the two are the same figure.)
 
 | Figure              | Rule                                                       | Kind                                                   |
 | ------------------- | ---------------------------------------------------------- | ------------------------------------------------------ |
-| `record`            | not zero; answers `maxRate`, `initialCentre`, `centre`, `lastAsOf` and `centreOver`, each with one word, when asked at creation | Set at creation; `ZeroRecord()`, `BadConfig()` |
+| `record`            | not zero; answers `maxRate`, `initialCentre`, `centre`, `lastAsOf` and `centreOver`, each with one word, when asked at creation, and `STALE_AFTER` with the formula's own figure | Set at creation; `ZeroRecord()`, `BadConfig()` |
 | `ceiling`           | the record's `maxRate`, read once                          | Set at creation; `BadConfig()` if zero or too wide     |
 | `restingCentre`     | the record's `initialCentre`, read once, lowered to the ceiling if above it | Set at creation; `BadConfig()` if zero |
-| `STALE_AFTER`       | 7 days; past it, by the last reading's `asOf`, the resting centre is charged | Constant                            |
+| `STALE_AFTER`       | 7 days; past it, by the last reading's `asOf`, the resting centre is charged; the record's `STALE_AFTER` must be the same | Constant |
 | `targetUtilisation` | strictly between 0 and 1e18                                | Set at creation; `InvalidTarget()`                     |
 | `floorFraction`     | below 1e18 (zero allowed: no rate at zero utilisation)     | Set at creation; `InvalidFloorFraction()`              |
 | `fullMultiple`      | above zero; steeper above than below; `ceiling × fullMultiple × 1e18` must fit in 256 bits | Set at creation; `ZeroMultiple()`, `SlopeAboveNotSteeper()`, `BadConfig()` |

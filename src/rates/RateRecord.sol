@@ -32,6 +32,16 @@ import {IRateRecord} from "../../interfaces/IRateRecord.sol";
 /// mean of the centre over any span from those checkpoints, and the following formula charges a
 /// market at the mean over the time since the market's last accrual.
 ///
+/// A silence. The stored centre is left as it is when readings stop, and the following formula
+/// charges it only until the last reading's `asOf` is `STALE_AFTER` old; after that it charges the
+/// initial centre, the resting centre, until a reading is accepted again. So that a reading which
+/// ends such a silence cannot re-price it, the rest is written into the history before the reading
+/// is: a reading accepted more than `STALE_AFTER` after the last one first checkpoints the initial
+/// centre at the moment the record went stale, `lastAsOf + STALE_AFTER`, and then the centre in force
+/// from its own block. A span across a silence that has ended is thus priced as it was while the
+/// silence was open, whoever touches what in whatever order. The stored `centre` itself does not rest:
+/// it is the figure of the last reading, and only a reading moves it.
+///
 /// Widths. `asOf` is a uint64 and every rate is at most `maxRate`, which is below 2^192, so a running
 /// sum is below 2^192 * 2^64 = 2^256 over any span of time: no sum can overflow. The centre is at most
 /// `maxRate` too, so the integral of the centre is below 2^256 up to any time a uint64 can name.
@@ -52,6 +62,11 @@ contract RateRecord is IRateRecord, EIP712 {
     uint256 public constant HISTORY = 64;
     /// @notice The delay between a handover's submission and its execution.
     uint256 public constant ROTATE_DELAY = 72 hours;
+    /// @notice How long after the last accepted reading's `asOf` the stored centre is still in force;
+    ///         past it, the record is stale and the initial centre is in force until a reading is
+    ///         accepted again. The following formula charges the same figure, and a reading that ends
+    ///         a silence writes the rest into the history at this moment.
+    uint256 public constant STALE_AFTER = 7 days;
 
     /// @dev The widest rate the running sums can carry over a uint64 span without overflowing.
     uint256 internal constant MAX_RATE_WIDTH = type(uint192).max;
@@ -136,7 +151,9 @@ contract RateRecord is IRateRecord, EIP712 {
         initialCentre = initialCentre_;
         signer = signer_;
         centre = initialCentre_;
-        _checkpoint(initialCentre_);
+        // The clock is the chain's: the history starts at the block of creation.
+        // forge-lint: disable-next-line(block-timestamp)
+        _checkpoint(block.timestamp, initialCentre_);
     }
 
     // ------------------------------------------------------------------ readings
@@ -183,11 +200,20 @@ contract RateRecord is IRateRecord, EIP712 {
         // moves takes effect from this block, and is checkpointed so that the time before it stays
         // priced at the centre that was in force.
         if (count != 0) {
-            uint256 moved = _centreAt(count, top);
-            if (moved != centre) {
-                centre = moved;
-                _checkpoint(moved);
+            // This reading ends a silence if the record went stale before this block: the initial
+            // centre was in force from that moment, and the history must say so before this reading's
+            // centre is written after it. The moment is never before the last checkpoint, which is
+            // at most MAX_AGE after the last reading's asOf. A stored centre already at the initial
+            // centre rested at nothing: no checkpoint is needed.
+            uint256 inForce = centre;
+            uint256 staleAt = uint256(last) + STALE_AFTER;
+            if (now_ > staleAt && inForce != initialCentre) {
+                _checkpoint(staleAt, initialCentre);
+                inForce = initialCentre;
             }
+            uint256 moved = _centreAt(count, top);
+            if (moved != inForce) _checkpoint(now_, moved);
+            centre = moved;
         }
         emit ReadingAccepted(r.id, r.asOf, top, centre);
     }
@@ -269,9 +295,12 @@ contract RateRecord is IRateRecord, EIP712 {
 
     /// @notice The mean of the centre over the span from `from` to `to`, weighted by time, from the
     ///         record's checkpoints: each centre counts from the block in which the reading that stored
-    ///         it was delivered until the next change. Time before the record's creation is not
-    ///         counted; a span of no length answers the centre in force at `to`. Depends on nothing but
-    ///         the stored history and its arguments, and never reverts for a `to` a uint64 can name.
+    ///         it was delivered until the next change, and over a silence that a later reading ended,
+    ///         the initial centre counts from the moment the record went stale. A silence still open is
+    ///         not in the history: the last centre counts to the end of the span. Time before the
+    ///         record's creation is not counted; a span of no length answers the centre in force at
+    ///         `to`. Depends on nothing but the stored history and its arguments, and never reverts
+    ///         for a `to` a uint64 can name.
     function centreOver(uint256 from, uint256 to) external view returns (uint256) {
         uint256 first = _checkpoints[0].at;
         if (from < first) from = first;
@@ -332,20 +361,20 @@ contract RateRecord is IRateRecord, EIP712 {
         }
     }
 
-    /// @dev Record that the centre is `newCentre` from this block on, with the integral of the centre
-    ///      up to this block carried forward from the last checkpoint (zero at creation).
-    function _checkpoint(uint256 newCentre) internal {
-        // The clock is the chain's: a centre takes effect from the block that stores it.
-        // forge-lint: disable-next-line(block-timestamp)
-        uint256 at = block.timestamp;
+    /// @dev Record that the centre is `newCentre` from `at` on, with the integral of the centre up to
+    ///      `at` carried forward from the last checkpoint (zero at creation). `at` is this block for a
+    ///      centre a reading stores, and the moment the record went stale for a rest; it is never
+    ///      before the last checkpoint.
+    function _checkpoint(uint256 at, uint256 newCentre) internal {
         uint256 integral = 0;
         uint256 n = _checkpoints.length;
         if (n != 0) {
             Checkpoint storage last = _checkpoints[n - 1];
             integral = last.integral + uint256(last.centre) * (at - last.at);
         }
-        // casting to 'uint64' is safe because the chain's time fits the width `asOf` has; casting to
-        // 'uint192' is safe because the centre is at most `maxRate`, which is below 2^192
+        // casting to 'uint64' is safe because `at` is at most the chain's time, which fits the width
+        // `asOf` has; casting to 'uint192' is safe because the centre is at most `maxRate`, which is
+        // below 2^192
         // forge-lint: disable-next-line(unsafe-typecast)
         _checkpoints.push(Checkpoint({at: uint64(at), centre: uint192(newCentre), integral: integral}));
     }
