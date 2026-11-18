@@ -106,9 +106,12 @@ A reading then passes, in this order:
    hour old the reading is still accepted. So a reading is delivered within the hour of its `asOf` or
    never, whatever its deadline says: it cannot be held back and delivered when its moment suits, nor
    dated back into a silence so as to rewrite the window at once. Of two readings outstanding together,
-   delivering the later first still shuts the earlier out under check 6, but what can be shut out that
-   way is at most an hour of history, and a silence counts at the last stated rates for a week at the
-   most (see "A silence in the history" below).
+   delivering the later first still shuts the earlier out under check 6. Away from the moment of
+   staleness what can be shut out that way is at most an hour of history, and a silence counts at the
+   last stated rates for a week at the most; at the moment itself, with the earlier reading dated at
+   or before it and the later dated after it, the deliverer chooses between two centres, the last
+   stated rates in full and the initial centre (see "Two readings across the moment" under "A silence
+   in the history" below).
 6. If a reading was accepted before, `asOf` is at least 30 minutes after the last accepted `asOf`:
    `TooSoon(asOf, lastAsOf)`.
 7. Every rate is at most the record's highest rate: `RateTooHigh(index, rate)`.
@@ -253,6 +256,25 @@ If it is delivered after the moment, the rest is written from the moment to its 
 charged that time, and the averaged centre is checkpointed at its block after the rest; the deliverer
 chooses only the block from which the centre counts, within the hour, as every reading's deliverer
 does. And a reading dated after the moment starts the history afresh whenever it is delivered.
+
+**Two readings across the moment.** One choice remains, to whoever holds two readings outstanding
+across the moment: reading A dated at or before `lastAsOf + STALE_AFTER` and reading B dated after
+it, 30 minutes (`MIN_INTERVAL`) or more apart and both within `MAX_AGE` of the block, which is
+possible only when A is dated within the hour before the moment and B within the hour after it.
+A then B: A is averaged over a window lying wholly inside the silence, so the centre becomes the
+last stated rates in full; B then averages across A, and those rates fade over the next 24 hours.
+B alone: B starts the history afresh, the centre is the initial centre until the next reading, and
+A is refused for ever with `TooSoon`, so the dead rates are never averaged again. The two outcomes
+differ by up to `maxRate` against `initialCentre`, and the deliverer of both, or a block producer
+that holds A back for 30 minutes or more while B is signed, chooses between them. The choice exists
+only when a silence of about a week ends within the hour around the moment and A stays undelivered
+that long; anyone delivering A promptly closes it. The record does not remove the choice, because
+the step cannot be moved away: deciding the fresh start by an `asOf` more than `MAX_AGE` after the
+moment moves the boundary an hour on, where two readings straddle it just the same, and deciding it
+by the block brings back the choice of block the paragraph above shuts. Only a rule under which the
+dead rates faded rather than died at a stroke would remove it, and that is not this record's
+averaging rule. `test_stale_twoReadingsOutstandingAcrossTheMomentLetTheDelivererChoose` in
+`test/RateRecord.t.sol` shows both outcomes.
 
 So `centreOver` over a span across a silence that a reading has since ended answers exactly what the
 formula charged while the silence was open: the stored centre up to the moment of staleness, and the

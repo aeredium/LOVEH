@@ -56,6 +56,23 @@ import {IRateRecord} from "../../interfaces/IRateRecord.sol";
 /// `centre` itself rests only through a reading that starts the history afresh: it is the figure of
 /// the last reading, and only a reading moves it.
 ///
+/// Two readings across the moment. One choice remains, to whoever holds two readings outstanding
+/// across the moment of staleness: A dated at or before `lastAsOf + STALE_AFTER` and B dated after
+/// it, `MIN_INTERVAL` or more apart and both within `MAX_AGE` of the block, which is possible only
+/// when A is dated within the hour before the moment and B within the hour after it. A then B: A is
+/// averaged over a window lying wholly inside the silence, so the centre becomes the last stated
+/// rates in full, and B then averages across A, so those rates fade over the next 24 hours. B alone:
+/// B starts the history afresh, the centre is the initial centre until the next reading, and A is
+/// refused for ever with `TooSoon`. The two outcomes differ by up to `maxRate` against
+/// `initialCentre`, and the deliverer of both, or a block producer holding A back for 30 minutes or
+/// more while B is signed, chooses between them. The choice exists only when a silence of about a
+/// week ends within the hour around the moment and A stays undelivered that long; anyone delivering
+/// A promptly closes it. The record does not remove the choice, because the step cannot be moved
+/// away: deciding the fresh start by an `asOf` more than `MAX_AGE` after the moment moves the
+/// boundary an hour on, where two readings straddle it just the same, and deciding it by the block
+/// brings back the choice of block the paragraph above shuts. Only a rule under which the dead
+/// rates faded rather than died at a stroke would remove it, and that is not this record's rule.
+///
 /// Widths. `asOf` is a uint64 and every rate is at most `maxRate`, which is below 2^192, so a running
 /// sum is below 2^192 * 2^64 = 2^256 over any span of time: no sum can overflow. The centre is at most
 /// `maxRate` too, so the integral of the centre is below 2^256 up to any time a uint64 can name.
@@ -247,7 +264,10 @@ contract RateRecord is IRateRecord, EIP712 {
             // stated before it a week old at the most and averages them as any reading does; the
             // time between the moment and the block, if any, stays priced at rest in the history,
             // as the formula charged it, and whoever delivers the reading chooses only the block
-            // from which its centre counts, within the hour, as with every reading.
+            // from which its centre counts, within the hour, as with every reading. The one choice
+            // left, to whoever holds two readings outstanding across the moment, one dated on each
+            // side of it, is stated in the contract's notice: delivered in order they are averaged,
+            // the later alone starts afresh and shuts the earlier out under the TooSoon check.
             uint256 moved;
             if (r.asOf > staleAt) {
                 _historyStart = count;
