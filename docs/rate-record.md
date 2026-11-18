@@ -247,6 +247,14 @@ before the block, `c` is the record's `centre()` as it stands. The rate is linea
 the mean centre is exactly the mean of the rates the parts of the span would have been charged on their
 own.
 
+A direct quote is not what a market is charged. The formula's answer depends on who asks: a market is
+answered over its own span, while an account, a contract without `lastAccrual()` or an off-chain call
+asking `ratePerSecond` directly is answered at the centre as it stands. The two differ whenever the
+centre moved, or the record went stale, within the market's span. To learn what a market will be
+charged, ask the market: its `loans()` and `loanOf()` price the span exactly as `accrue()` will. A
+market reads the formula before it writes its last accrual, so its span always has its length; a
+contract that happens to answer `lastAccrual()` of its own is answered over the span that answer names.
+
 ### A stale record
 
 The record's centre is a stored figure: readings move it and silence leaves it as it is. Left alone,

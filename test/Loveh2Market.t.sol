@@ -293,6 +293,57 @@ contract Loveh2MarketTest is RateRecordBase {
         assertEq(market.unlent() + market.loans(), market.deposits() + market.feeOwed(), "identity");
     }
 
+    // ------------------------------------------------------------------ a direct quote (security reading finding 3)
+
+    /// @dev The formula's answer depends on who asks. A direct quote, from an account or a contract
+    ///      without a last accrual, is the rate at the centre as it stands; the market is charged
+    ///      over its own span. The two differ across a change of the centre, and what the market will
+    ///      be charged is read from the market, not from the formula. The market reads the formula
+    ///      before it writes its last accrual, so its span has its length: were the order reversed,
+    ///      the span would be empty and the market would be charged the direct quote.
+    function test_directQuoteIsNotWhatAMarketIsCharged() public {
+        _fund(loan, lender, 1000e18);
+        vm.prank(lender);
+        market.deposit(1000e18, lender);
+        _fund(coll, borrower, 1e18);
+        vm.prank(borrower);
+        market.depositCollateral(1e18, borrower);
+        vm.prank(borrower);
+        market.borrow(800e18, borrower);
+        assertEq(market.lastAccrual(), T0);
+
+        // Three days at the initial centre, then the readings move the centre to 12 percent, then
+        // three more days: the market's span holds both.
+        skip(2 days);
+        _submitAt(block.timestamp, _uniform(R12));
+        skip(24 hours);
+        _submitAt(block.timestamp, _uniform(R12));
+        assertEq(record.centre(), R12);
+        skip(3 days);
+
+        uint256 quote = formula.ratePerSecond(800e18, 1000e18);
+        vm.prank(stranger);
+        uint256 quoteByAnAccount = formula.ratePerSecond(800e18, 1000e18);
+        assertEq(quote, R12, "a direct quote: the centre as it stands");
+        assertEq(quoteByAnAccount, R12);
+        uint256 charged = (3 days * R5 + 3 days * R12) / 6 days;
+        assertEq(record.centreOver(T0, block.timestamp), charged);
+        assertLt(charged, quote, "the market is charged less than the quote says");
+        assertEq(
+            market.loans(), 800e18 + 800e18 * (charged * 6 days) / WAD, "the market's own view says what it is charged"
+        );
+        assertEq(market.loanOf(borrower), market.loans());
+        assertLt(market.loans(), 800e18 + 800e18 * (quote * 6 days) / WAD, "and that is not the quote");
+
+        // The charge is the view's, and the market's last accrual is written after the rate is read.
+        market.accrue();
+        assertEq(market.totalInterest(), 800e18 * (charged * 6 days) / WAD, "six days at the mean, not at the quote");
+        assertEq(market.lastAccrual(), block.timestamp);
+        // Touched again in the same block, nothing more is charged: an empty span is the quote, at nothing.
+        market.accrue();
+        assertEq(market.totalInterest(), 800e18 * (charged * 6 days) / WAD);
+    }
+
     // ------------------------------------------------------------------ a silence (security reading finding 2)
 
     /// @dev When readings stop, the record's centre stays what it was, and before the fix every market

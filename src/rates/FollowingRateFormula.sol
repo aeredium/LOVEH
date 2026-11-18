@@ -24,6 +24,15 @@ import {Utilisation} from "./Utilisation.sol";
 /// does not answer, or its last accrual is not before this block, `c` is the centre as it stands.
 /// The rate is linear in `c`, so the rate at the mean centre is the mean of the rates over the span.
 ///
+/// A direct quote is not what a market is charged. The answer depends on who asks: a market is
+/// answered over its own span, and an account, a contract or an off-chain caller asking the formula
+/// directly is answered at the centre as it stands, which differs from the market's charge whenever
+/// the centre moved, or the record went stale, within the market's span. To learn what a market
+/// will be charged, ask the market: its `loans()` and `loanOf()` price the span as `accrue()` will.
+/// A market reads this formula before it writes its last accrual (`Market._accrue`), so its span
+/// always has its length; a contract that happens to answer `lastAccrual()` is answered over the
+/// span that answer names.
+///
 /// A stale record. The record's centre is a stored figure that readings move and silence leaves as it
 /// is, so a record whose readings have stopped would charge its last centre for ever. This formula
 /// bounds that: once the last accepted reading is more than `STALE_AFTER` old, by its `asOf`, the
