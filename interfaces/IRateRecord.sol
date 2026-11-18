@@ -24,7 +24,8 @@ interface IRateRecord {
         uint256 deadline;
     }
 
-    /// @notice A handover of the signer to `next`, effective 72 hours after it is submitted.
+    /// @notice A handover of the signer to `next`, effective 72 hours after it is submitted and
+    ///         executable for 72 hours after that.
     struct Rotate {
         bytes32 id;
         address next;
@@ -72,20 +73,22 @@ interface IRateRecord {
     function submitReading(Reading calldata r, bytes calldata signature) external;
 
     /// @notice Queue a handover of the signer to `r.next`, signed by the current signer. It becomes
-    ///         executable 72 hours after this block. Until it executes, the current signer may void
-    ///         it with a signed `Void`; nobody else can stop it.
+    ///         executable 72 hours after this block and stays so for 72 hours more, then is void.
+    ///         Until it executes or its window closes, the current signer may void it with a signed
+    ///         `Void`; nobody else can stop it.
     function submitRotate(Rotate calldata r, bytes calldata signature) external;
 
     /// @notice Void the queued handover `v.handover`, signed by the current signer, so that it can
     ///         never execute. Refused, each with its own error, when the deadline is past, the id was
     ///         used before, the signature is not the signer's, `v.handover` names no queued handover,
-    ///         or that handover is already void: voided before, or queued before the last executed
-    ///         handover, which includes the executed one itself.
+    ///         or that handover is already void: voided before, queued before the last executed
+    ///         handover, which includes the executed one itself, or past its window.
     function submitVoid(Void calldata v, bytes calldata signature) external;
 
-    /// @notice Execute a queued handover once its delay has passed. Anyone may call it. Every
-    ///         handover queued before the last executed one is void forever, as is every handover
-    ///         the signer voided.
+    /// @notice Execute a queued handover once its delay has passed and before its window closes.
+    ///         Anyone may call it. Every handover queued before the last executed one is void
+    ///         forever, as is every handover the signer voided and every handover whose window has
+    ///         closed: one not executed within 72 hours of becoming ready refuses with `Voided(id)`.
     function executeRotate(bytes32 id) external;
 
     // ------------------------------------------------------------------ digests

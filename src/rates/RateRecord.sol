@@ -14,8 +14,9 @@ import {IRateRecord} from "../../interfaces/IRateRecord.sol";
 ///         leaders' average rates over the last 24 hours. A following rate formula reads that figure.
 ///
 /// The record holds no value and moves no coin. It has no owner: the only authority is the signer,
-/// and the signer changes only by a handover the signer itself signs, effective 72 hours later. Until
-/// a queued handover executes, the signer may void it by a second signed instruction, so that a
+/// and the signer changes only by a handover the signer itself signs, effective 72 hours later and
+/// executable by anyone for 72 hours after that, then void. Until a queued handover executes or its
+/// window closes, the signer may void it by a second signed instruction, so that a
 /// handover to a wrong address need not complete. A void does not recover the record from a stolen
 /// key: the void is signed by the same key as the handover and takes effect at once, so whoever holds
 /// a copy of the key can void every handover the other holder queues, the rightful signer's rescue
@@ -66,6 +67,9 @@ contract RateRecord is IRateRecord, EIP712 {
     uint256 public constant HISTORY = 64;
     /// @notice The delay between a handover's submission and its execution.
     uint256 public constant ROTATE_DELAY = 72 hours;
+    /// @notice How long after a handover becomes ready it may still be executed; past that it is void,
+    ///         so a handover left unexecuted does not stay executable by anyone for ever.
+    uint256 public constant ROTATE_WINDOW = 72 hours;
     /// @notice How long after the last accepted reading's `asOf` the stored centre is still in force;
     ///         past it, the record is stale and the initial centre is in force until a reading is
     ///         accepted again. The following formula charges the same figure, and a reading that ends
@@ -100,7 +104,8 @@ contract RateRecord is IRateRecord, EIP712 {
     }
 
     /// @dev A queued handover. `generation` is the count of executed handovers at queueing time; a
-    ///      handover executes only while that count is unchanged and the signer has not voided it.
+    ///      handover executes only while that count is unchanged, the signer has not voided it, and
+    ///      the block is not past `readyAt + ROTATE_WINDOW`.
     struct Handover {
         address next;
         uint256 readyAt;
@@ -337,12 +342,16 @@ contract RateRecord is IRateRecord, EIP712 {
     }
 
     /// @dev The queued handover `id`, if it is still live: refused with `NotQueued` when nothing was
-    ///      queued under `id`, and with `Voided` when the signer voided it or another handover has
-    ///      executed since it was queued.
+    ///      queued under `id`, and with `Voided` when the signer voided it, another handover has
+    ///      executed since it was queued, or its window has closed: the block is past `readyAt` plus
+    ///      `ROTATE_WINDOW`. At the last second of the window it is still live.
     function _live(bytes32 id) internal view returns (Handover storage h) {
         h = _handovers[id];
         if (h.next == address(0)) revert NotQueued(id);
-        if (h.voided || h.generation != _executedHandovers) revert Voided(id);
+        // The clock is the chain's: a handover's window closes by the block's time, by design.
+        // forge-lint: disable-next-line(block-timestamp)
+        bool expired = block.timestamp > h.readyAt + ROTATE_WINDOW;
+        if (h.voided || h.generation != _executedHandovers || expired) revert Voided(id);
     }
 
     /// @dev The three candidates with the largest deposits among those above zero, in rank order; a

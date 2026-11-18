@@ -8,10 +8,11 @@ centre, the mean of the three leaders' average borrowing rates over the last 24 
 rate formula reads that figure on every touch of a market.
 
 The record holds no value and moves no coin. It has no owner. The only authority is the signer, and the
-signer changes only by a handover the signer itself signs, effective 72 hours later. Until a queued
-handover executes, the signer, and nobody else, may void it by a second signed instruction, so that a
-handover signed to a wrong address need not complete. A void does not recover the record from a stolen
-key (see "Void" below). Nobody can pause the record or set the centre by hand.
+signer changes only by a handover the signer itself signs, effective 72 hours later and executable for
+72 hours after that, then void. Until a queued handover executes or its window closes, the signer, and
+nobody else, may void it by a second signed instruction, so that a handover signed to a wrong address
+need not complete. A void does not recover the record from a stolen key (see "Void" below). Nobody can
+pause the record or set the centre by hand.
 
 Every rate is a per-second rate scaled by 1e18, the unit the rate formulas use: a figure of 1e18 means
 100 percent per second.
@@ -54,7 +55,11 @@ Rotate(bytes32 id,address next,uint256 deadline)
 | `deadline` | The last Unix time at which the handover may be queued.            |
 
 Delivered with `submitRotate(rotate, signature)` by anyone; executed later with `executeRotate(id)` by
-anyone.
+anyone, from 72 hours (`ROTATE_DELAY`) after the block that queued it until 72 hours (`ROTATE_WINDOW`)
+after that. A handover not executed within its window is void: `executeRotate` refuses it with
+`Voided(id)` from the first second past the window, so a handover queued as a contingency, or abandoned
+after a change of mind, does not stay executable by anyone for ever, to an address that may since have
+been retired, lost or compromised. The `deadline` bounds only the queueing.
 
 ### Void
 
@@ -70,9 +75,9 @@ Void(bytes32 id,bytes32 handover,uint256 deadline)
 
 Delivered with `submitVoid(void, signature)` by anyone, signed by the current signer. A voided handover
 can never execute; nothing else about the record changes. Nobody but the signer can void a handover,
-and nothing but execution or a void ends one: a queued handover has no expiry of its own, so a signer
-who has signed a handover to a wrong address voids it within the 72 hours and, if need be, queues
-another.
+and nothing but execution, a void or the close of its window ends one, so a signer who has signed a
+handover to a wrong address voids it within the 72 hours and, if need be, queues another. A handover
+whose window has closed is void already, and a void of it is refused with `Voided(handover)`.
 
 What a void does not do: it does not recover the record from a stolen key. A void is signed by the
 same key as a handover, and it takes effect at once while a handover waits 72 hours. So whoever holds
@@ -117,15 +122,16 @@ A handover then passes:
 A void then passes:
 
 4. `handover` names a queued handover: `NotQueued(handover)`.
-5. That handover is still live: `Voided(handover)` if the signer voided it before, or if another
-   handover has executed since it was queued.
+5. That handover is still live: `Voided(handover)` if the signer voided it before, if another
+   handover has executed since it was queued, or if its window has closed.
 
 And `executeRotate(id)` checks:
 
 1. The id names a queued handover: `NotQueued(id)`.
-2. The handover is still live: `Voided(id)` if the signer voided it, or if another handover has
-   executed since it was queued. Every handover queued before the last executed one is void forever,
-   including the executed one itself.
+2. The handover is still live: `Voided(id)` if the signer voided it, if another handover has
+   executed since it was queued, or if the block is past its window: `readyAt + ROTATE_WINDOW`, 72
+   hours after it became ready. At the last second of the window it is still live. Every handover
+   queued before the last executed one is void forever, including the executed one itself.
 3. Its delay has passed: `NotReady(readyAt)` until 72 hours after the block in which it was queued.
 
 ## What an accepted reading does
@@ -251,6 +257,7 @@ rise and the new one from the block of the rise. See "The following formula" bel
 | `MAX_AGE`        | 1 hour                     | Constant; the greatest age of a reading at delivery          |
 | `HISTORY`        | 64 readings                | Constant; `HISTORY × MIN_INTERVAL` exceeds `WINDOW`, asserted at creation |
 | `ROTATE_DELAY`   | 72 hours                   | Constant                                                    |
+| `ROTATE_WINDOW`  | 72 hours                   | Constant; how long after becoming ready a handover may still be executed, then void |
 | `STALE_AFTER`    | 7 days                     | Constant; the moment after the last `asOf` at which the record is stale and a reading that ends the silence rests the history; the formula's figure, which must be the same |
 | `candidates`     | ten non-zero, distinct labels | Set at creation; refused with `BadConfig()` otherwise    |
 | `maxRate`        | above zero, below 2^192    | Set at creation; refused with `BadConfig()` otherwise. The bound keeps every running sum below 2^256 over any span a 64-bit `asOf` can name |

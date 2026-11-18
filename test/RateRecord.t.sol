@@ -63,6 +63,7 @@ contract RateRecordTest is RateRecordBase {
         assertEq(record.MAX_AGE(), 1 hours);
         assertEq(record.HISTORY(), 64);
         assertEq(record.ROTATE_DELAY(), 72 hours);
+        assertEq(record.ROTATE_WINDOW(), 72 hours);
         assertEq(record.STALE_AFTER(), 7 days);
         assertGt(record.HISTORY() * record.MIN_INTERVAL(), record.WINDOW(), "the ring must cover the window");
         assertGt(record.STALE_AFTER(), record.MAX_AGE(), "the rest is never before the last checkpoint");

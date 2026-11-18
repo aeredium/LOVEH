@@ -4,9 +4,9 @@ pragma solidity 0.8.28;
 import {RateRecordBase} from "./RateRecordBase.t.sol";
 import {IRateRecord} from "../interfaces/IRateRecord.sol";
 
-/// @notice The handover of the signer: queued by the signer, executed by anyone 72 hours later,
-///         voidable by the signer alone until then, and voiding every handover queued before the one
-///         executed.
+/// @notice The handover of the signer: queued by the signer, executed by anyone 72 hours later and
+///         within the 72 hours after that, voidable by the signer alone until then, void once its
+///         window closes, and voiding every handover queued before the one executed.
 contract RateRecordRotationTest is RateRecordBase {
     uint256 internal constant R = 0.05e18 / YEAR;
 
@@ -200,13 +200,71 @@ contract RateRecordRotationTest is RateRecordBase {
         vm.prank(stranger);
         vm.expectRevert(abi.encodeWithSelector(IRateRecord.Voided.selector, wrong));
         record.executeRotate(wrong);
+        assertEq(record.signer(), signer);
+
+        // The rescue is untouched by the void and executes once ready, within its window.
+        vm.warp(T0 + 73 hours);
+        record.executeRotate(rescue);
+        assertEq(record.signer(), next);
         vm.warp(T0 + 100 days);
         vm.expectRevert(abi.encodeWithSelector(IRateRecord.Voided.selector, wrong));
         record.executeRotate(wrong);
-        assertEq(record.signer(), signer);
+        assertEq(record.signer(), next);
+    }
 
-        // The rescue is untouched by the void and executes once ready.
-        record.executeRotate(rescue);
+    /// @dev Security reading finding 3 (third reading). A handover's `deadline` bounds only its
+    ///      queueing, and before the fix nothing but a void or another's execution ended a queued one,
+    ///      so a handover left unexecuted, as a contingency or after a change of mind, stayed
+    ///      executable by anyone for ever, to an address that may since have been retired, lost or
+    ///      compromised. Now a handover is void once the block is past `readyAt + ROTATE_WINDOW`.
+    function test_execute_refusedOnceTheWindowHasClosed() public {
+        bytes32 id = _queueRotate(next);
+        uint256 readyAt = T0 + 72 hours;
+        uint256 closesAt = readyAt + record.ROTATE_WINDOW();
+        assertEq(closesAt, T0 + 144 hours);
+
+        // One second past the window: void, for anyone, for ever; and no longer voidable either.
+        vm.warp(closesAt + 1);
+        vm.prank(stranger);
+        vm.expectRevert(abi.encodeWithSelector(IRateRecord.Voided.selector, id));
+        record.executeRotate(id);
+        vm.warp(T0 + 200 days);
+        vm.expectRevert(abi.encodeWithSelector(IRateRecord.Voided.selector, id));
+        record.executeRotate(id);
+        IRateRecord.Void memory v = _void(id);
+        bytes memory sig = _signVoid(v, signerSeed);
+        vm.expectRevert(abi.encodeWithSelector(IRateRecord.Voided.selector, id));
+        record.submitVoid(v, sig);
+        assertEq(record.signer(), signer, "the abandoned handover never executed");
+        _submitSigned(block.timestamp, signerSeed);
+        _expectReadingRefused(block.timestamp, nextSeed);
+
+        // A fresh handover queued now is live, and executes within its own window.
+        bytes32 fresh = _queueRotate(next);
+        vm.warp(block.timestamp + 72 hours + 72 hours);
+        record.executeRotate(fresh);
+        assertEq(record.signer(), next);
+    }
+
+    /// @dev At the last second of the window a handover still executes; the window is closed only
+    ///      once the block is past it. A void inside the window is still the signer's remedy.
+    function test_execute_atTheLastSecondOfTheWindow() public {
+        bytes32 id = _queueRotate(next);
+        vm.warp(T0 + 144 hours);
+        vm.prank(stranger);
+        record.executeRotate(id);
+        assertEq(record.signer(), next);
+
+        // Queued by the new signer, voided by the new signer at the last second of its window.
+        IRateRecord.Rotate memory r = _rotate(other);
+        bytes memory sig = _signRotate(r, nextSeed);
+        record.submitRotate(r, sig);
+        vm.warp(block.timestamp + 144 hours);
+        IRateRecord.Void memory v = _void(r.id);
+        sig = _signVoid(v, nextSeed);
+        record.submitVoid(v, sig);
+        vm.expectRevert(abi.encodeWithSelector(IRateRecord.Voided.selector, r.id));
+        record.executeRotate(r.id);
         assertEq(record.signer(), next);
     }
 
