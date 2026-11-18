@@ -832,9 +832,11 @@ contract RateRecordTest is RateRecordBase {
 
     /// @dev The rest is dated by the block that ends the silence and the last reading's `asOf`, not by
     ///      the resuming reading's `asOf`: a reading dated before the moment of staleness but delivered
-    ///      after it still ends a silence, and the rest runs from that moment to the block of the
-    ///      reading after it. A reading delivered at the moment itself ends nothing. A reading that
-    ///      moves the centre after a silence is checkpointed after the rest.
+    ///      after it still writes the rest, from that moment to its own block, since the formula
+    ///      charged the rest over that time; but it is dated before the moment, so it does not start
+    ///      the history afresh (security reading finding 2, fifth reading): it is averaged as any
+    ///      reading is, and its centre counts from its block, checkpointed after the rest. A reading
+    ///      delivered at the moment itself writes nothing.
     function test_centreOver_restIsDatedByTheDeliveryAndTheLastAsOf() public {
         _submitAt(T0, _uniform(3 * R));
         _submitAt(T0 + 24 * HOUR, _uniform(3 * R));
@@ -848,21 +850,28 @@ contract RateRecordTest is RateRecordBase {
         assertEq(record.lastAsOf(), staleAt - 30 minutes);
 
         // The next moment of staleness, by the new asOf. A reading dated twenty minutes before it and
-        // delivered half an hour after it ends the silence: the rest runs from the moment to the block.
+        // delivered half an hour after it: the rest runs from the moment to the block, and then the
+        // reading's own centre, averaged as any reading's is since it is dated before the moment,
+        // counts from the block. Before the fix of the fifth reading's finding 2 this delivery
+        // started the history afresh and left the centre at rest until the next reading.
         staleAt = staleAt - 30 minutes + 7 days;
         uint256 delivered = staleAt + 30 minutes;
         vm.warp(delivered);
         _submit(_reading(staleAt - 20 minutes, _descendingDeposits(), _uniform(3 * R)));
         assertEq(record.centreOver(staleAt - 1 hours, staleAt), 3 * R);
         assertEq(record.centreOver(staleAt, delivered), INITIAL_CENTRE, "at rest from the moment to the block");
-        assertEq(record.centre(), INITIAL_CENTRE, "the resuming reading starts the history afresh");
-        assertEq(record.centreOver(delivered, delivered + 1 hours), INITIAL_CENTRE, "at rest from the block too");
-        // The reading after it, half an hour on, averages the resuming reading's rates over the time
-        // since it, and the centre counts from that block.
+        assertEq(record.centre(), 3 * R, "dated before the moment: averaged, the history goes on");
+        assertEq(record.centreOver(delivered, delivered + 1 hours), 3 * R, "its centre from the block");
+        assertEq(
+            record.centreOver(staleAt - 1, delivered + 1),
+            (2 * 3 * R + 30 minutes * INITIAL_CENTRE) / (30 minutes + 2),
+            "a second before the moment, the rest, a second after the block"
+        );
+        // The reading after it, half an hour on, averages across it as any window does.
         _submitAt(delivered + 30 minutes, _uniform(3 * R));
         assertEq(record.centre(), 3 * R);
-        assertEq(record.centreOver(delivered, delivered + 30 minutes), INITIAL_CENTRE, "the rest ran to the next one");
-        assertEq(record.centreOver(delivered + 30 minutes, delivered + 90 minutes), 3 * R, "the centre again from then");
+        assertEq(record.centreOver(delivered, delivered + 30 minutes), 3 * R, "the rest ran to the resuming reading");
+        assertEq(record.centreOver(delivered + 30 minutes, delivered + 90 minutes), 3 * R, "the centre still");
 
         // A silence ended by readings at other rates: the rest, which runs to the reading after the
         // resuming one, then the new centre from the block of that reading.
@@ -886,6 +895,91 @@ contract RateRecordTest is RateRecordBase {
         assertEq(record.centre(), R);
         assertEq(record.centreOver(lastAsOf, lastAsOf + 30 days), R);
         assertEq(record.centreOver(lastAsOf + 7 days - 1, lastAsOf + 7 days + 1), R);
+    }
+
+    /// @dev Security reading finding 2 (fifth reading). Before the fix, whether a reading started the
+    ///      history afresh was decided by the block of its delivery against the moment of staleness,
+    ///      and a reading may be delivered up to an hour after its `asOf`. So a reading dated within
+    ///      the hour before the moment could be delivered on either side of it, by whoever held it or
+    ///      by a block producer holding it back one block: delivered at or before the moment, it was
+    ///      averaged and the centre became the last stated rates in full; delivered a second later,
+    ///      it started the history afresh and the centre became the initial centre. A borrower took
+    ///      the lower, a lender the higher, bounded only by `maxRate`. Now the fresh start is decided
+    ///      by the signed `asOf` alone: a reading dated at or before the moment is averaged whenever
+    ///      it is delivered, with the rest still written from the moment to its block, and a reading
+    ///      dated after the moment starts the history afresh whenever it is delivered.
+    function test_stale_whetherAReadingStartsTheHistoryAfreshIsDecidedByItsAsOf() public {
+        _hourly(0, 24, _uniform(MAX_RATE));
+        uint256 lastAsOf = T0 + 24 * HOUR;
+        uint256 staleAt = lastAsOf + record.STALE_AFTER();
+        assertEq(record.centre(), MAX_RATE);
+
+        // A reading at 2R dated half an hour before the moment, delivered one second after it. Before
+        // the fix the centre became the initial centre here and the next reading averaged 2R alone.
+        IRateRecord.Reading memory ending = _reading(staleAt - 30 minutes, _descendingDeposits(), _uniform(2 * R));
+        ending.deadline = staleAt + 1 hours;
+        vm.warp(staleAt + 1);
+        _submit(ending);
+        assertEq(record.centre(), MAX_RATE, "dated before the moment: averaged, the last stated rates fill the window");
+        assertEq(record.lastAsOf(), staleAt - 30 minutes);
+        assertEq(record.centreOver(lastAsOf, staleAt), MAX_RATE, "the week before the moment");
+        assertEq(record.centreOver(staleAt, staleAt + 1), INITIAL_CENTRE, "the second at rest, as the formula charged");
+        assertEq(record.centreOver(staleAt + 1, staleAt + 1 hours), MAX_RATE, "the averaged centre from the block");
+        // The next reading, half an hour on, averages across the ending reading as any window does:
+        // twenty-three and a half hours at the dead rate, half an hour at 2R. The history went on.
+        _submitAt(staleAt, _uniform(2 * R));
+        uint256 across = (47 * MAX_RATE + 2 * R) / 48;
+        assertEq(record.centre(), across, "the window reaches back across the ending reading");
+        assertEq(record.centreOver(staleAt + 1, staleAt + 2), across);
+
+        // The same two readings, the first delivered one second earlier, at the moment itself: the
+        // same centres, with no rest since the record never went stale. The deliverer chose nothing
+        // but the block from which the centre counts. Shown on a second record, made at T0.
+        vm.warp(T0);
+        record = new RateRecord(labels, MAX_RATE, INITIAL_CENTRE, signer);
+        _hourly(0, 24, _uniform(MAX_RATE));
+        ending = _reading(staleAt - 30 minutes, _descendingDeposits(), _uniform(2 * R));
+        ending.deadline = staleAt + 1 hours;
+        vm.warp(staleAt);
+        _submit(ending);
+        assertEq(record.centre(), MAX_RATE, "delivered at the moment: the same centre");
+        assertEq(record.centreOver(staleAt, staleAt + 1), MAX_RATE, "and no rest");
+        _submitAt(staleAt, _uniform(2 * R));
+        assertEq(record.centre(), across, "the next reading: the same");
+        assertEq(record.centreOver(staleAt, staleAt + 1), across);
+
+        // A reading dated at the moment to the second, delivered an hour later, the latest it may
+        // be: still averaged, with the hour at rest in the history before its block.
+        uint256 moment = staleAt + record.STALE_AFTER();
+        IRateRecord.Reading memory atTheMoment = _reading(moment, _descendingDeposits(), _uniform(2 * R));
+        atTheMoment.deadline = moment + 1 hours;
+        vm.warp(moment + 1 hours);
+        _submit(atTheMoment);
+        assertEq(record.centre(), 2 * R, "dated at the moment: averaged, the window holds 2R alone");
+        assertEq(record.centreOver(moment, moment + 1 hours), INITIAL_CENTRE, "the hour at rest");
+        assertEq(record.centreOver(moment + 1 hours, moment + 2 hours), 2 * R, "then the averaged centre");
+
+        // A reading dated one second after the moment, at 4R, delivered then: the history starts
+        // afresh whenever it is delivered, and the next reading averages its rates alone.
+        moment = moment + record.STALE_AFTER();
+        IRateRecord.Reading memory afterTheMoment = _reading(moment + 1, _descendingDeposits(), _uniform(4 * R));
+        afterTheMoment.deadline = moment + 1 hours;
+        vm.warp(moment + 1);
+        _submit(afterTheMoment);
+        assertEq(record.centre(), INITIAL_CENTRE, "dated after the moment: the history starts afresh");
+        assertEq(record.centreOver(moment, moment + 1), INITIAL_CENTRE, "the rest");
+        assertEq(record.centreOver(moment + 1, moment + 1 hours), INITIAL_CENTRE, "at rest until the next reading");
+        _submitAt(moment + 1 + 30 minutes, _uniform(3 * R));
+        assertEq(record.centre(), 4 * R, "the resuming reading's rates alone: the dead 2R is not averaged again");
+
+        // Dated one second after the moment and delivered an hour later: the same fresh start.
+        moment = record.lastAsOf() + record.STALE_AFTER();
+        afterTheMoment = _reading(moment + 1, _descendingDeposits(), _uniform(2 * R));
+        afterTheMoment.deadline = moment + 1 hours + 1;
+        vm.warp(moment + 1 hours + 1);
+        _submit(afterTheMoment);
+        assertEq(record.centre(), INITIAL_CENTRE, "delivered an hour on: afresh all the same");
+        assertEq(record.centreOver(moment, moment + 1 hours + 1), INITIAL_CENTRE);
     }
 
     /// @dev A reading that leaves the centre unchanged makes no checkpoint, and a reading that moves

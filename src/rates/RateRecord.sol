@@ -45,11 +45,16 @@ import {IRateRecord} from "../../interfaces/IRateRecord.sol";
 /// went stale, `lastAsOf + STALE_AFTER`. A span across a silence that has ended is thus priced as it
 /// was while the silence was open, whoever touches what in whatever order. And so that the rates
 /// stated before the silence, dead for more than a week, are not put back in force by the reading
-/// that ends it, that reading starts a new history, as the first reading ever did: it names the
-/// leaders and is stored, but it is averaged over nothing, so the centre stays at the initial centre
-/// until the next reading, and the window of every later reading reaches no further back than it.
-/// The stored `centre` itself rests only through such a reading: it is the figure of the last
-/// reading, and only a reading moves it.
+/// that ends it, a reading whose signed `asOf` is more than `STALE_AFTER` after the last one starts
+/// a new history, as the first reading ever did: it names the leaders and is stored, but it is
+/// averaged over nothing, so the centre stays at the initial centre until the next reading, and the
+/// window of every later reading reaches no further back than it. Whether a reading starts the
+/// history afresh is thus decided by what the signer signed, not by the block of delivery: a reading
+/// dated at or before the moment of staleness and delivered after it, within `MAX_AGE`, writes the
+/// rest from the moment to its block and then averages as any reading does, so whoever delivers it
+/// has no choice of centre, only the choice of block every reading's deliverer has. The stored
+/// `centre` itself rests only through a reading that starts the history afresh: it is the figure of
+/// the last reading, and only a reading moves it.
 ///
 /// Widths. `asOf` is a uint64 and every rate is at most `maxRate`, which is below 2^192, so a running
 /// sum is below 2^192 * 2^64 = 2^256 over any span of time: no sum can overflow. The centre is at most
@@ -75,10 +80,11 @@ contract RateRecord is IRateRecord, EIP712 {
     ///         so a handover left unexecuted does not stay executable by anyone for ever.
     uint256 public constant ROTATE_WINDOW = 72 hours;
     /// @notice How long after the last accepted reading's `asOf` the stored centre is still in force;
-    ///         past it, the record is stale and the initial centre is in force until the reading after
-    ///         the one that ends the silence. The following formula charges the same figure, and a
-    ///         reading that ends a silence writes the rest into the history at this moment and starts
-    ///         a new history, so the rates stated before the silence are never averaged again.
+    ///         past it, the record is stale and the initial centre is in force until the next reading
+    ///         that moves the centre. The following formula charges the same figure. A reading
+    ///         delivered in a block past this moment writes the rest into the history at the moment;
+    ///         a reading dated past it, by its signed `asOf`, starts a new history, so the rates
+    ///         stated before the silence are never averaged again.
     uint256 public constant STALE_AFTER = 7 days;
 
     /// @dev The widest rate the running sums can carry over a uint64 span without overflowing.
@@ -219,24 +225,38 @@ contract RateRecord is IRateRecord, EIP712 {
         // priced at the centre that was in force.
         if (count != 0) {
             uint256 staleAt = uint256(last) + STALE_AFTER;
+            // The centre in force at this block before the reading: the stored one, or the initial
+            // centre if the record went stale before this block. Whether it did is the block's
+            // affair, whoever delivered what: the formula charged the initial centre from the moment
+            // of staleness to this block while the silence was open, so the history must say so.
+            // The moment is never before the last checkpoint, which is at most MAX_AGE after the
+            // last reading's asOf. A stored centre already at the initial centre rested at nothing:
+            // no checkpoint is needed.
+            uint256 inForce = centre;
             if (now_ > staleAt) {
-                // This reading ends a silence: the record went stale before this block, and the
-                // initial centre was in force from that moment, so the history must say so. The
-                // moment is never before the last checkpoint, which is at most MAX_AGE after the
-                // last reading's asOf. A stored centre already at the initial centre rested at
-                // nothing: no checkpoint is needed. The rates stated before the silence are dead,
-                // more than a week old, and are not put back in force by averaging a window that
-                // lies inside the silence: this reading starts a new history instead, as the first
-                // reading did, and the centre stays at the initial centre until the next reading,
-                // whose window reaches back no further than this one.
-                if (centre != initialCentre) _checkpoint(staleAt, initialCentre);
-                _historyStart = count;
-                centre = initialCentre;
-            } else {
-                uint256 moved = _centreAt(count, top);
-                if (moved != centre) _checkpoint(now_, moved);
-                centre = moved;
+                if (inForce != initialCentre) _checkpoint(staleAt, initialCentre);
+                inForce = initialCentre;
             }
+            // Whether the reading ends a silence is the signer's affair, decided by the asOf it
+            // signed and not by the block of delivery. A reading dated after the moment of staleness
+            // finds the rates stated before it dead, more than a week old, and does not put them
+            // back in force by averaging a window that lies inside the silence: it starts a new
+            // history instead, as the first reading did, and the centre is the initial centre until
+            // the next reading, whose window reaches back no further than this one. A reading dated
+            // at or before the moment, however late within MAX_AGE it is delivered, finds the rates
+            // stated before it a week old at the most and averages them as any reading does; the
+            // time between the moment and the block, if any, stays priced at rest in the history,
+            // as the formula charged it, and whoever delivers the reading chooses only the block
+            // from which its centre counts, within the hour, as with every reading.
+            uint256 moved;
+            if (r.asOf > staleAt) {
+                _historyStart = count;
+                moved = initialCentre;
+            } else {
+                moved = _centreAt(count, top);
+            }
+            if (moved != inForce) _checkpoint(now_, moved);
+            centre = moved;
         }
         emit ReadingAccepted(r.id, r.asOf, top, centre);
     }
@@ -320,7 +340,9 @@ contract RateRecord is IRateRecord, EIP712 {
     ///         record's checkpoints: each centre counts from the block in which the reading that stored
     ///         it was delivered until the next change, and over a silence that a later reading ended,
     ///         the initial centre counts from the moment the record went stale until the block of the
-    ///         reading after the one that ended it. A silence still open is not in the history: the
+    ///         next reading that moves the centre: the one after the resuming reading when that is
+    ///         dated past the moment, the resuming reading itself when it is dated at or before it.
+    ///         A silence still open is not in the history: the
     ///         last centre counts to the end of the span. Time before the record's creation is not
     ///         counted; a span of no length answers the centre in force at `to`. Depends on nothing
     ///         but the stored history and its arguments, and never reverts for a `to` a uint64 can
