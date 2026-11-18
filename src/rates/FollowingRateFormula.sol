@@ -52,11 +52,11 @@ import {Utilisation} from "./Utilisation.sol";
 /// that ends one writes the rest into the record's history (the record's `STALE_AFTER`, the same
 /// figure, read at creation and refused if it differs), so a market untouched across a silence that
 /// has ended is charged, through `centreOver`, exactly what it would have been charged during it.
-/// A reading dated, by its signed `asOf`, past the moment the record went stale also starts the
-/// record's history afresh: its stored centre is the initial centre, the resting centre, until the
-/// next reading, so the rates stated before the silence, dead for more than a week, are not charged
-/// again after it. A reading dated at or before the moment is averaged as any reading is, whenever
-/// within the record's `MAX_AGE` it is delivered.
+/// The reading that ends a silence is dated after the moment the record went stale (the record
+/// accepts no reading dated within its `MAX_AGE` before the moment, so none dated at or before it is
+/// delivered after it) and starts the record's history afresh: its stored centre is the initial
+/// centre, the resting centre, until the next reading, so the rates stated before the silence, dead
+/// for more than a week, are not charged again after it.
 contract FollowingRateFormula is IRateFormula {
     error ZeroRecord();
     error InvalidTarget();

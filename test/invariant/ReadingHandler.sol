@@ -7,7 +7,9 @@ import {RateRecord} from "../../src/rates/RateRecord.sol";
 
 /// @notice Drives one rate record through random valid readings signed by its signer: random rates
 ///         up to the highest, random deposits, random leaders. Never reverts. A reading is skipped,
-///         not refused, when the least interval since the last one has not passed.
+///         not refused, when the least interval since the last one has not passed, or when the
+///         block is within the hour before the moment the record goes stale, where no reading is
+///         dated (the record's check 7, `AcrossTheMoment`).
 contract ReadingHandler is Test {
     RateRecord public record;
     uint256 internal signerSeed;
@@ -22,9 +24,17 @@ contract ReadingHandler is Test {
 
     function submit(uint256 salt, uint256[10] memory rates, uint256[10] memory deposits) external {
         uint256 asOf = block.timestamp;
-        if (record.readingCount() != 0 && asOf < record.lastAsOf() + record.MIN_INTERVAL()) {
-            ++skipped;
-            return;
+        if (record.readingCount() != 0) {
+            uint256 last = record.lastAsOf();
+            if (asOf < last + record.MIN_INTERVAL()) {
+                ++skipped;
+                return;
+            }
+            uint256 staleAt = last + record.STALE_AFTER();
+            if (asOf <= staleAt && asOf + record.MAX_AGE() > staleAt) {
+                ++skipped;
+                return;
+            }
         }
         uint256 maxRate = record.maxRate();
         for (uint256 i = 0; i < 10; ++i) {

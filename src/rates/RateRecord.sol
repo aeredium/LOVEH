@@ -40,38 +40,39 @@ import {IRateRecord} from "../../interfaces/IRateRecord.sol";
 /// A silence. The stored centre is left as it is when readings stop, and the following formula
 /// charges it only until the last reading's `asOf` is `STALE_AFTER` old; after that it charges the
 /// initial centre, the resting centre. So that a reading which ends such a silence cannot re-price
-/// it, the rest is written into the history before the reading is: a reading accepted more than
-/// `STALE_AFTER` after the last one first checkpoints the initial centre at the moment the record
-/// went stale, `lastAsOf + STALE_AFTER`. A span across a silence that has ended is thus priced as it
-/// was while the silence was open, whoever touches what in whatever order. And so that the rates
-/// stated before the silence, dead for more than a week, are not put back in force by the reading
-/// that ends it, a reading whose signed `asOf` is more than `STALE_AFTER` after the last one starts
-/// a new history, as the first reading ever did: it names the leaders and is stored, but it is
-/// averaged over nothing, so the centre stays at the initial centre until the next reading, and the
-/// window of every later reading reaches no further back than it. Whether a reading starts the
-/// history afresh is thus decided by what the signer signed, not by the block of delivery: a reading
-/// dated at or before the moment of staleness and delivered after it, within `MAX_AGE`, writes the
-/// rest from the moment to its block and then averages as any reading does, so whoever delivers it
-/// has no choice of centre, only the choice of block every reading's deliverer has. The stored
-/// `centre` itself rests only through a reading that starts the history afresh: it is the figure of
-/// the last reading, and only a reading moves it.
+/// it, the rest is written into the history before the reading is: a reading accepted after the
+/// moment the record went stale, `lastAsOf + STALE_AFTER`, first checkpoints the initial centre at
+/// that moment. A span across a silence that has ended is thus priced as it was while the silence
+/// was open, whoever touches what in whatever order. And so that the rates stated before the
+/// silence, dead for more than a week, are not put back in force by the reading that ends it, that
+/// reading starts a new history, as the first reading ever did: it names the leaders and is stored,
+/// but it is averaged over nothing, so the centre stays at the initial centre until the next
+/// reading, and the window of every later reading reaches no further back than it. The stored
+/// `centre` itself rests only through such a reading: it is the figure of the last reading, and only
+/// a reading moves it.
 ///
-/// Two readings across the moment. One choice remains, to whoever holds two readings outstanding
-/// across the moment of staleness: A dated at or before `lastAsOf + STALE_AFTER` and B dated after
-/// it, `MIN_INTERVAL` or more apart and both within `MAX_AGE` of the block, which is possible only
-/// when A is dated within the hour before the moment and B within the hour after it. A then B: A is
-/// averaged over a window lying wholly inside the silence, so the centre becomes the last stated
-/// rates in full, and B then averages across A, so those rates fade over the next 24 hours. B alone:
-/// B starts the history afresh, the centre is the initial centre until the next reading, and A is
-/// refused for ever with `TooSoon`. The two outcomes differ by up to `maxRate` against
-/// `initialCentre`, and the deliverer of both, or a block producer holding A back for 30 minutes or
-/// more while B is signed, chooses between them. The choice exists only when a silence of about a
-/// week ends within the hour around the moment and A stays undelivered that long; anyone delivering
-/// A promptly closes it. The record does not remove the choice, because the step cannot be moved
-/// away: deciding the fresh start by an `asOf` more than `MAX_AGE` after the moment moves the
-/// boundary an hour on, where two readings straddle it just the same, and deciding it by the block
-/// brings back the choice of block the paragraph above shuts. Only a rule under which the dead
-/// rates faded rather than died at a stroke would remove it, and that is not this record's rule.
+/// Readings across the moment. A reading may be delivered up to `MAX_AGE` after its `asOf`, so
+/// without more a reading dated within the hour before the moment of staleness could be delivered
+/// on either side of it. Were the side a reading falls on decided by the block of delivery, whoever
+/// held such a reading, or a block producer holding it back one block, would choose between the
+/// last stated rates in full (averaged, before the moment) and the initial centre (a fresh start,
+/// after it), bounded only by `maxRate`. Were it decided by the signed `asOf` alone, whoever held two
+/// readings outstanding across the moment, A dated at or before it and B dated after it,
+/// `MIN_INTERVAL` or more apart and both within `MAX_AGE` of one block, would choose the same way:
+/// A then B averages A over a window lying wholly inside the silence, so the centre becomes the dead
+/// rates in full and fades over the next day across B; B alone starts the history afresh and shuts A
+/// out for ever under `TooSoon`. The record closes both with a gap: once a history exists, a reading
+/// dated within `MAX_AGE` before the moment, at or before it, is refused with `AcrossTheMoment`. An
+/// accepted reading dated at or before the moment is then deliverable only in a block at or before
+/// it, since it is `Stale` an hour after its `asOf`, and a reading dated after the moment only in a
+/// block after it, since it is `FromTheFuture` until then. No block admits readings dated on both
+/// sides, so the side is the same by the signed `asOf` and by the block, and no order of delivery
+/// chooses a centre: a reading dated after the moment is delivered after it, writes the rest and
+/// starts afresh; a reading dated at or before it is delivered at or before it and is averaged as any
+/// reading is, its deliverer choosing only the block from which its centre counts, within the hour,
+/// as every reading's deliverer does. The cost is that a reading dated in the last hour before the
+/// moment is refused, and the signer's next reading, dated after the moment, starts the history
+/// afresh.
 ///
 /// Widths. `asOf` is a uint64 and every rate is at most `maxRate`, which is below 2^192, so a running
 /// sum is below 2^192 * 2^64 = 2^256 over any span of time: no sum can overflow. The centre is at most
@@ -98,10 +99,11 @@ contract RateRecord is IRateRecord, EIP712 {
     uint256 public constant ROTATE_WINDOW = 72 hours;
     /// @notice How long after the last accepted reading's `asOf` the stored centre is still in force;
     ///         past it, the record is stale and the initial centre is in force until the next reading
-    ///         that moves the centre. The following formula charges the same figure. A reading
-    ///         delivered in a block past this moment writes the rest into the history at the moment;
-    ///         a reading dated past it, by its signed `asOf`, starts a new history, so the rates
-    ///         stated before the silence are never averaged again.
+    ///         that moves the centre. The following formula charges the same figure. A reading dated
+    ///         after this moment, and so delivered after it, first writes the rest into the history
+    ///         at the moment and then starts a new history, so the rates stated before the silence
+    ///         are never averaged again. No accepted reading is dated within `MAX_AGE` before the
+    ///         moment, so no reading dated at or before it is delivered after it.
     uint256 public constant STALE_AFTER = 7 days;
 
     /// @dev The widest rate the running sums can carry over a uint64 span without overflowing.
@@ -212,6 +214,15 @@ contract RateRecord is IRateRecord, EIP712 {
         uint256 count = readingCount;
         uint64 last = lastAsOf;
         if (count != 0 && r.asOf < last + MIN_INTERVAL) revert TooSoon(r.asOf, last);
+        // Once a history exists, no reading is dated within MAX_AGE before the moment the record
+        // goes stale, at or before it. An accepted reading dated at or before the moment can then be
+        // delivered only in a block at or before it, and a reading dated after the moment only in a
+        // block after it, so no block admits readings dated on both sides of the moment and no order
+        // of delivery chooses between averaging the dead rates and starting the history afresh (see
+        // the notice, "Readings across the moment"). The cost is that a reading dated in the last
+        // hour before the moment is refused, and the signer's next one, dated after it, starts afresh.
+        uint256 staleAt = uint256(last) + STALE_AFTER;
+        if (count != 0 && r.asOf <= staleAt && r.asOf + MAX_AGE > staleAt) revert AcrossTheMoment(r.asOf, staleAt);
         for (uint256 i = 0; i < CANDIDATES; ++i) {
             if (r.rates[i] > maxRate) revert RateTooHigh(i, r.rates[i]);
         }
@@ -237,45 +248,36 @@ contract RateRecord is IRateRecord, EIP712 {
         _leaders = top;
         lastAsOf = r.asOf;
         readingCount = count + 1;
-        // The first reading has no span to average over: the centre stays what it is. A centre that
-        // moves takes effect from this block, and is checkpointed so that the time before it stays
-        // priced at the centre that was in force.
+        // The first reading has no span to average over: the centre stays what it is.
         if (count != 0) {
-            uint256 staleAt = uint256(last) + STALE_AFTER;
-            // The centre in force at this block before the reading: the stored one, or the initial
-            // centre if the record went stale before this block. Whether it did is the block's
-            // affair, whoever delivered what: the formula charged the initial centre from the moment
-            // of staleness to this block while the silence was open, so the history must say so.
-            // The moment is never before the last checkpoint, which is at most MAX_AGE after the
-            // last reading's asOf. A stored centre already at the initial centre rested at nothing:
-            // no checkpoint is needed.
-            uint256 inForce = centre;
-            if (now_ > staleAt) {
-                if (inForce != initialCentre) _checkpoint(staleAt, initialCentre);
-                inForce = initialCentre;
-            }
-            // Whether the reading ends a silence is the signer's affair, decided by the asOf it
-            // signed and not by the block of delivery. A reading dated after the moment of staleness
-            // finds the rates stated before it dead, more than a week old, and does not put them
-            // back in force by averaging a window that lies inside the silence: it starts a new
-            // history instead, as the first reading did, and the centre is the initial centre until
-            // the next reading, whose window reaches back no further than this one. A reading dated
-            // at or before the moment, however late within MAX_AGE it is delivered, finds the rates
-            // stated before it a week old at the most and averages them as any reading does; the
-            // time between the moment and the block, if any, stays priced at rest in the history,
-            // as the formula charged it, and whoever delivers the reading chooses only the block
-            // from which its centre counts, within the hour, as with every reading. The one choice
-            // left, to whoever holds two readings outstanding across the moment, one dated on each
-            // side of it, is stated in the contract's notice: delivered in order they are averaged,
-            // the later alone starts afresh and shuts the earlier out under the TooSoon check.
+            // Which side of the moment of staleness the reading falls on is the same question by its
+            // signed asOf and by this block: a reading dated after the moment is delivered after it,
+            // since the block is never before asOf, and a reading dated at or before the moment is
+            // delivered at or before it, since none is dated within MAX_AGE before the moment (the
+            // check above) and none is delivered more than MAX_AGE after its asOf. No block admits
+            // readings dated on both sides, so no order of delivery chooses a centre.
             uint256 moved;
             if (r.asOf > staleAt) {
+                // The record went stale before this block: the formula charged the initial centre
+                // from the moment to this block while the silence was open, so the history must say
+                // so. The moment is never before the last checkpoint, which is at most MAX_AGE after
+                // the last reading's asOf. A stored centre already at the initial centre rested at
+                // nothing: no checkpoint is needed. The reading finds the rates stated before it
+                // dead, more than a week old, and does not put them back in force by averaging a
+                // window that lies inside the silence: it starts a new history instead, as the first
+                // reading did, and the centre is the initial centre until the next reading, whose
+                // window reaches back no further than this one.
+                if (centre != initialCentre) _checkpoint(staleAt, initialCentre);
                 _historyStart = count;
                 moved = initialCentre;
             } else {
+                // The record never went stale: the reading finds the rates stated before it a week
+                // old at the most and averages them as any reading does. A centre that moves takes
+                // effect from this block, and is checkpointed so that the time before it stays
+                // priced at the centre that was in force.
                 moved = _centreAt(count, top);
+                if (moved != centre) _checkpoint(now_, moved);
             }
-            if (moved != inForce) _checkpoint(now_, moved);
             centre = moved;
         }
         emit ReadingAccepted(r.id, r.asOf, top, centre);
@@ -360,8 +362,7 @@ contract RateRecord is IRateRecord, EIP712 {
     ///         record's checkpoints: each centre counts from the block in which the reading that stored
     ///         it was delivered until the next change, and over a silence that a later reading ended,
     ///         the initial centre counts from the moment the record went stale until the block of the
-    ///         next reading that moves the centre: the one after the resuming reading when that is
-    ///         dated past the moment, the resuming reading itself when it is dated at or before it.
+    ///         next reading that moves the centre, the one after the reading that ended the silence.
     ///         A silence still open is not in the history: the
     ///         last centre counts to the end of the span. Time before the record's creation is not
     ///         counted; a span of no length answers the centre in force at `to`. Depends on nothing

@@ -696,6 +696,22 @@
   },
   {
     "type": "error",
+    "name": "AcrossTheMoment",
+    "inputs": [
+      {
+        "name": "asOf",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "staleAt",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "AlreadyUsed",
     "inputs": [
       {
