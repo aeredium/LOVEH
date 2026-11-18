@@ -23,6 +23,17 @@ import {Utilisation} from "./Utilisation.sol";
 /// every market answers, and reads `centreOver(lastAccrual, now)` from the record. When the caller
 /// does not answer, or its last accrual is not before this block, `c` is the centre as it stands.
 /// The rate is linear in `c`, so the rate at the mean centre is the mean of the rates over the span.
+///
+/// A stale record. The record's centre is a stored figure that readings move and silence leaves as it
+/// is, so a record whose readings have stopped would charge its last centre for ever. This formula
+/// bounds that: once the last accepted reading is more than `STALE_AFTER` old, by its `asOf`, the
+/// centre charged is the resting centre, the record's `initialCentre` read once at creation, until a
+/// reading is accepted again. Over a span that crosses the moment the record went stale, the time
+/// before it is charged at the record's centre and the time after it at the resting centre, each
+/// weighted by its length. The formula knows only the last reading's `asOf`, so a silence that
+/// readings have since ended is invisible to it: a market untouched across one is charged the
+/// record's centre over its whole span. A touch of the market during the silence, which anyone may
+/// give through `accrue()`, fixes the resting centre over the time so far.
 contract FollowingRateFormula is IRateFormula {
     error ZeroRecord();
     error InvalidTarget();
@@ -33,10 +44,17 @@ contract FollowingRateFormula is IRateFormula {
 
     uint256 internal constant WAD = 1e18;
 
+    /// @notice How long after the last accepted reading's `asOf` the record's centre is still charged;
+    ///         past it, the resting centre is charged until a reading is accepted again.
+    uint256 public constant STALE_AFTER = 7 days;
+
     /// @notice The rate record whose centre this formula follows.
     address public immutable record;
     /// @notice The record's highest rate, read once at creation; a centre above it is lowered to it.
     uint256 public immutable ceiling;
+    /// @notice The centre charged while the record is stale: its `initialCentre`, read once at creation
+    ///         and lowered to the ceiling if above it.
+    uint256 public immutable restingCentre;
     /// @notice The utilisation at which the rate is exactly the centre, scaled by 1e18, strictly between 0 and 1e18.
     uint256 public immutable targetUtilisation;
     /// @notice The fraction of the centre charged at zero utilisation, scaled by 1e18, below 1e18.
@@ -61,9 +79,15 @@ contract FollowingRateFormula is IRateFormula {
         // ceiling * (1e18 + fullMultiple), the rate at full utilisation times 1e18.
         if (ceiling_ == 0 || ceiling_ > type(uint256).max / WAD) revert BadConfig();
         if (fullMultiple_ > type(uint256).max / (ceiling_ * WAD)) revert BadConfig();
+        // The resting centre is a centre like any other: lowered to the ceiling if above it, so that
+        // the span arithmetic below stays within the bound the ceiling gives, and never nothing.
+        uint256 resting = RateRecord(record_).initialCentre();
+        if (resting == 0) revert BadConfig();
+        if (resting > ceiling_) resting = ceiling_;
 
         record = record_;
         ceiling = ceiling_;
+        restingCentre = resting;
         targetUtilisation = targetUtilisation_;
         floorFraction = floorFraction_;
         fullMultiple = fullMultiple_;
@@ -82,17 +106,33 @@ contract FollowingRateFormula is IRateFormula {
 
     /// @dev The centre the caller is charged: the record's centre averaged over the time since the
     ///      caller's last accrual when the caller answers `lastAccrual()` with a time before this
-    ///      block, and the centre as it stands otherwise. The ask is a static call that changes
+    ///      block, and the centre as it stands otherwise; with the resting centre in place of the
+    ///      record's over any time after the record went stale. The ask is a static call that changes
     ///      nothing, and a caller that does not answer it is not a fault.
     function _centre() internal view returns (uint256) {
+        RateRecord r = RateRecord(record);
+        // The clock is the chain's: the span ends at this block, and the record is stale once the
+        // block is more than STALE_AFTER past the last reading's asOf.
+        // forge-lint: disable-next-line(block-timestamp)
+        uint256 to = block.timestamp;
+        uint256 staleAt = uint256(r.lastAsOf()) + STALE_AFTER;
         (bool answered, bytes memory data) = msg.sender.staticcall(abi.encodeCall(IMarket.lastAccrual, ()));
         if (answered && data.length == 32) {
             uint256 from = abi.decode(data, (uint256));
-            // The clock is the chain's: the span ends at this block.
-            // forge-lint: disable-next-line(block-timestamp)
-            uint256 to = block.timestamp;
-            if (from < to) return RateRecord(record).centreOver(from, to);
+            if (from < to) {
+                if (staleAt <= from) return restingCentre;
+                if (to <= staleAt) return r.centreOver(from, to);
+                // The span crosses the moment the record went stale: the record's centre before it,
+                // the resting centre after it, each weighted by its length. Both are lowered to the
+                // ceiling first; a record's ceiling is below 2^192 and the span below 2^64, so the
+                // weighted sum fits.
+                uint256 live = staleAt - from;
+                uint256 stale = to - staleAt;
+                uint256 before = r.centreOver(from, staleAt);
+                if (before > ceiling) before = ceiling;
+                return (before * live + restingCentre * stale) / (live + stale);
+            }
         }
-        return RateRecord(record).centre();
+        return to > staleAt ? restingCentre : r.centre();
     }
 }

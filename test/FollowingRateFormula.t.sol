@@ -66,6 +66,8 @@ contract FollowingRateFormulaTest is RateRecordBase {
     function test_construction() public view {
         assertEq(formula.record(), address(record));
         assertEq(formula.ceiling(), MAX_RATE, "the ceiling is the record's highest rate, read at creation");
+        assertEq(formula.restingCentre(), INITIAL_CENTRE, "the resting centre is the record's initial centre");
+        assertEq(formula.STALE_AFTER(), 7 days);
         assertEq(formula.targetUtilisation(), TARGET);
         assertEq(formula.floorFraction(), FLOOR);
         assertEq(formula.fullMultiple(), FULL);
@@ -112,6 +114,11 @@ contract FollowingRateFormulaTest is RateRecordBase {
         mock.setMaxRate(type(uint256).max / WAD + 1);
         vm.expectRevert(FollowingRateFormula.BadConfig.selector);
         new FollowingRateFormula(address(mock), TARGET, FLOOR, FULL);
+        // A record whose initial centre is nothing would rest at nothing: refused.
+        mock.setMaxRate(MAX_RATE);
+        mock.setInitialCentre(0);
+        vm.expectRevert(FollowingRateFormula.BadConfig.selector);
+        new FollowingRateFormula(address(mock), TARGET, FLOOR, FULL);
     }
 
     // ------------------------------------------------------------------ shape (4, 8.13)
@@ -145,6 +152,7 @@ contract FollowingRateFormulaTest is RateRecordBase {
         MockRateRecord mock = new MockRateRecord(MAX_RATE, MAX_RATE + 1);
         FollowingRateFormula f = new FollowingRateFormula(address(mock), TARGET, FLOOR, FULL);
         assertEq(f.ceiling(), MAX_RATE);
+        assertEq(f.restingCentre(), MAX_RATE, "a resting centre above the ceiling is lowered to it at creation");
         assertEq(f.ratePerSecond(80, 100), MAX_RATE, "lowered to the ceiling");
         mock.setCentre(type(uint256).max);
         assertEq(f.ratePerSecond(80, 100), MAX_RATE);
@@ -197,13 +205,16 @@ contract FollowingRateFormulaTest is RateRecordBase {
     // ------------------------------------------------------------------ never reverts (4, 8.14)
 
     /// @dev Any loans, any deposits, and the record in any state: no reading, a history at the
-    ///      highest rate, or a random history.
+    ///      highest rate, a random history, or a history at the highest rate gone stale.
     function testFuzz_neverReverts(uint256 loans, uint256 deposits, uint256[10] calldata seeds, uint8 state) public {
-        state = uint8(bound(state, 0, 3));
+        state = uint8(bound(state, 0, 4));
         if (state == 1) {
             _setCentre(MAX_RATE);
         } else if (state == 2) {
             _submitAt(T0, _uniform(MAX_RATE));
+        } else if (state == 4) {
+            _setCentre(MAX_RATE);
+            vm.warp(block.timestamp + 30 days);
         } else if (state == 3) {
             uint256 t = T0;
             for (uint256 n = 0; n < 4; ++n) {
@@ -300,5 +311,115 @@ contract FollowingRateFormulaTest is RateRecordBase {
         uint256 meanCentre = record.centreOver(stepAt - split, stepAt + 1 hours);
         assertEq(meanCentre, (split * INITIAL_CENTRE + 1 hours * c2) / (split + 1 hours));
         assertEq(caller.rate(formula, loans, deposits), _expected(meanCentre, Utilisation.compute(loans, deposits)));
+    }
+
+    // ------------------------------------------------------------------ a stale record (security reading finding 2)
+
+    /// @dev The record's centre is a stored figure that silence leaves as it is, and before the fix
+    ///      the formula charged it at any age: a last reading at a spike was charged for ever. Now a
+    ///      centre whose last reading is more than STALE_AFTER old, by its `asOf`, gives way to the
+    ///      resting centre until a reading is accepted again.
+    function test_stale_restsAtTheInitialCentreAfterSevenDaysOfSilence() public {
+        _setCentre(MAX_RATE);
+        uint256 lastAsOf = record.lastAsOf();
+        assertEq(formula.ratePerSecond(80, 100), MAX_RATE);
+
+        // A week old to the second: still the record's centre.
+        vm.warp(lastAsOf + 7 days);
+        assertEq(formula.ratePerSecond(80, 100), MAX_RATE, "at seven days the centre is still charged");
+        // One second older: the resting centre, at every utilisation, and the record is untouched.
+        vm.warp(lastAsOf + 7 days + 1);
+        assertEq(formula.ratePerSecond(80, 100), INITIAL_CENTRE, "past seven days the resting centre");
+        assertEq(formula.ratePerSecond(0, 100), INITIAL_CENTRE * FLOOR / WAD);
+        assertEq(formula.ratePerSecond(100, 100), INITIAL_CENTRE * (WAD + FULL) / WAD);
+        assertEq(formula.ratePerSecond(40, 100), _expected(INITIAL_CENTRE, 0.4e18));
+        assertEq(record.centre(), MAX_RATE, "the record's own centre is what it was");
+        vm.warp(lastAsOf + 365 days);
+        assertEq(formula.ratePerSecond(80, 100), INITIAL_CENTRE, "and stays at rest however long the silence");
+
+        // A reading accepted again makes the record fresh from that block: the centre is charged once more.
+        _submitAt(block.timestamp, _uniform(MAX_RATE));
+        assertEq(record.centre(), MAX_RATE);
+        assertEq(formula.ratePerSecond(80, 100), MAX_RATE, "fresh again");
+        vm.warp(block.timestamp + 7 days);
+        assertEq(formula.ratePerSecond(80, 100), MAX_RATE);
+        vm.warp(block.timestamp + 1);
+        assertEq(formula.ratePerSecond(80, 100), INITIAL_CENTRE, "and stale again a week later");
+    }
+
+    /// @dev A silence at a low centre is bounded the same way: lenders are not left at nothing.
+    function test_stale_restsAtTheInitialCentreFromBelowToo() public {
+        _setCentre(1);
+        vm.warp(record.lastAsOf() + 7 days + 1);
+        assertEq(formula.ratePerSecond(80, 100), INITIAL_CENTRE);
+    }
+
+    /// @dev Before any reading the record's last `asOf` is zero, so it is stale from the start, and the
+    ///      resting centre is the initial centre the record answers anyway: the two agree.
+    function test_stale_beforeAnyReadingTheRestingCentreIsTheRecordsCentre() public {
+        assertEq(record.lastAsOf(), 0);
+        assertEq(record.centre(), INITIAL_CENTRE);
+        assertEq(formula.restingCentre(), record.centre());
+        assertEq(formula.ratePerSecond(80, 100), INITIAL_CENTRE);
+        AccruingCaller caller = new AccruingCaller();
+        caller.accrueAt(T0 - 30 days);
+        assertEq(caller.rate(formula, 80, 100), INITIAL_CENTRE);
+        // The first reading alone leaves the centre at the initial centre and makes the record fresh.
+        _submitAt(T0, _uniform(MAX_RATE));
+        assertEq(formula.ratePerSecond(80, 100), INITIAL_CENTRE);
+    }
+
+    /// @dev A caller whose span crosses the moment the record went stale is charged the record's
+    ///      centre for the time before it and the resting centre for the time after it.
+    function test_stale_spanAcrossTheMomentOfStalenessIsChargedPiecewise() public {
+        AccruingCaller caller = new AccruingCaller();
+        _setCentre(3 * R);
+        uint256 staleAt = record.lastAsOf() + 7 days;
+
+        // Two days before and two days after: the mean of 3R and R, equally weighted.
+        caller.accrueAt(staleAt - 2 days);
+        vm.warp(staleAt + 2 days);
+        assertEq(caller.rate(formula, 80, 100), 2 * R, "two days at 3R, two days at R");
+        assertEq(caller.rate(formula, 100, 100), 2 * R * (WAD + FULL) / WAD);
+        assertEq(caller.rate(formula, 40, 100), _expected(2 * R, 0.4e18));
+        assertEq(formula.ratePerSecond(80, 100), R, "asked without a last accrual: at rest");
+        // Six days before and two after: weighted by time.
+        caller.accrueAt(staleAt - 6 days);
+        assertEq(caller.rate(formula, 80, 100), (6 days * 3 * R + 2 days * R) / 8 days);
+        // Accrued at the moment of staleness, or after it: the resting centre alone.
+        caller.accrueAt(staleAt);
+        assertEq(caller.rate(formula, 80, 100), R);
+        caller.accrueAt(staleAt + 1 days);
+        assertEq(caller.rate(formula, 80, 100), R);
+        // A span that ends at or before the moment of staleness is untouched by it.
+        vm.warp(staleAt);
+        caller.accrueAt(staleAt - 2 days);
+        assertEq(caller.rate(formula, 80, 100), 3 * R);
+        vm.warp(staleAt - 1);
+        assertEq(caller.rate(formula, 80, 100), 3 * R);
+        // A span across the change of the centre and across the moment of staleness: the checkpoints
+        // before, the resting centre after.
+        vm.warp(staleAt + 1 days);
+        caller.accrueAt(T0);
+        // The centre moved from R to 3R at T0 + 24 hours; it went stale 7 days after that. The mean
+        // up to that moment is the record's, rounded down, and the resting centre is weighed in after.
+        assertEq(staleAt, T0 + 24 hours + 7 days);
+        uint256 before = record.centreOver(T0, staleAt);
+        assertEq(before, (1 days * R + 7 days * 3 * R) / 8 days);
+        assertEq(caller.rate(formula, 80, 100), (before * 8 days + 1 days * R) / 9 days);
+    }
+
+    /// @dev The mock's clock: a stand-in that answers a last reading in the past is at rest like the
+    ///      real record, and its resting centre is lowered to the ceiling.
+    function test_stale_withTheMockRecord() public {
+        MockRateRecord mock = new MockRateRecord(MAX_RATE, 3 * R);
+        mock.setInitialCentre(MAX_RATE + 1);
+        FollowingRateFormula f = new FollowingRateFormula(address(mock), TARGET, FLOOR, FULL);
+        assertEq(f.restingCentre(), MAX_RATE);
+        assertEq(f.ratePerSecond(80, 100), 3 * R, "fresh at creation");
+        vm.warp(T0 + 7 days + 1);
+        assertEq(f.ratePerSecond(80, 100), MAX_RATE, "stale: the resting centre");
+        mock.setLastAsOf(_u64(block.timestamp));
+        assertEq(f.ratePerSecond(80, 100), 3 * R, "fresh again");
     }
 }

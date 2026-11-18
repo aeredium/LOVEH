@@ -165,14 +165,21 @@ contract Loveh2MarketTest is RateRecordBase {
         _submitAt(block.timestamp, _uniform(R12));
         assertEq(record.centre(), R12, "the centre follows the stated rates");
 
-        // Phase 2: twenty days at the new centre. Utilisation is now a little above the target
+        // Phase 2: twenty days at the new centre, the signer reading the same rates every five days
+        // so that the record stays fresh (a silence of more than a week rests the centre: see
+        // test_silence_restsTheCentreAfterAWeek). Utilisation is now a little above the target
         // (interest raised the loans more than the deposits), so the rate is above the centre.
         uint256 rate2 = formula.ratePerSecond(market.loans(), market.deposits());
         assertGt(rate2, R12);
         assertLt(rate2, R12 * (WAD + FULL) / WAD);
         assertGt(rate2, 2 * hourRate, "the stated rates more than doubled the rate");
         uint256 loansBefore = market.loans();
-        skip(20 days);
+        for (uint256 n = 0; n < 3; ++n) {
+            skip(5 days);
+            _submitAt(block.timestamp, _uniform(R12));
+            assertEq(record.centre(), R12, "the same rates leave the centre where it is");
+        }
+        skip(5 days);
         market.accrue();
         _expectAccrual();
         _assertLedger();
@@ -284,5 +291,79 @@ contract Loveh2MarketTest is RateRecordBase {
             market.totalInterest() - interestBefore, loansBefore * (meanRate * 6 days) / WAD, "six days at the mean"
         );
         assertEq(market.unlent() + market.loans(), market.deposits() + market.feeOwed(), "identity");
+    }
+
+    // ------------------------------------------------------------------ a silence (security reading finding 2)
+
+    /// @dev When readings stop, the record's centre stays what it was, and before the fix every market
+    ///      charged it for ever: a last reading at a spike was charged until someone repaid. Now the
+    ///      formula rests the centre at the record's initial centre once the last reading is more than
+    ///      a week old, and a span across that moment is charged at the record's centre before it and
+    ///      the resting centre after it.
+    function test_silence_restsTheCentreAfterAWeek() public {
+        _fund(loan, lender, 1000e18);
+        vm.prank(lender);
+        market.deposit(1000e18, lender);
+        _fund(coll, borrower, 1e18);
+        vm.prank(borrower);
+        market.depositCollateral(1e18, borrower);
+        vm.prank(borrower);
+        market.borrow(800e18, borrower);
+
+        // The signer's readings bring the centre to a spike: the highest rate the record allows.
+        _submitAt(block.timestamp, _uniform(MAX_RATE));
+        skip(24 hours);
+        _submitAt(block.timestamp, _uniform(MAX_RATE));
+        assertEq(record.centre(), MAX_RATE);
+        market.accrue();
+        uint256 t2 = block.timestamp;
+        assertEq(market.lastAccrual(), t2);
+        uint256 loansBefore = market.loans();
+        uint256 depositsBefore = market.deposits();
+        uint256 u = Utilisation.compute(loansBefore, depositsBefore);
+        assertEq(formula.ratePerSecond(loansBefore, depositsBefore), _shape(MAX_RATE, u));
+
+        // Then silence. A week on, the spike is still charged; a second later, the resting centre.
+        uint256 staleAt = t2 + formula.STALE_AFTER();
+        assertEq(staleAt, t2 + 7 days);
+        vm.warp(staleAt);
+        assertEq(formula.ratePerSecond(loansBefore, depositsBefore), _shape(MAX_RATE, u), "a week old: still charged");
+        vm.warp(staleAt + 1);
+        assertEq(formula.ratePerSecond(loansBefore, depositsBefore), _shape(R5, u), "a second older: at rest");
+        assertEq(formula.restingCentre(), R5);
+        assertEq(record.centre(), MAX_RATE, "the record itself is unchanged");
+
+        // The market, untouched for twenty days, is charged the spike for the week and the resting
+        // centre for the thirteen days after it: nobody is charged a dead reading for ever.
+        vm.warp(t2 + 20 days);
+        uint256 mean = (7 days * MAX_RATE + 13 days * R5) / 20 days;
+        uint256 rate = _shape(mean, u);
+        uint256 interestBefore = market.totalInterest();
+        assertEq(market.loans(), loansBefore + loansBefore * (rate * 20 days) / WAD, "the view prices the span too");
+        market.accrue();
+        assertEq(
+            market.totalInterest() - interestBefore,
+            loansBefore * (rate * 20 days) / WAD,
+            "a week at the spike, thirteen days at rest"
+        );
+        assertLt(
+            market.totalInterest() - interestBefore,
+            loansBefore * (_shape(MAX_RATE, u) * 20 days) / WAD / 2,
+            "far less than twenty days at the spike"
+        );
+        assertEq(market.unlent() + market.loans(), market.deposits() + market.feeOwed(), "identity");
+
+        // Readings resume: the record is fresh from the block of the new reading, and its centre is
+        // charged again from then on.
+        _submitAt(block.timestamp, _uniform(MAX_RATE));
+        assertEq(record.centre(), MAX_RATE);
+        loansBefore = market.loans();
+        depositsBefore = market.deposits();
+        u = Utilisation.compute(loansBefore, depositsBefore);
+        assertEq(formula.ratePerSecond(loansBefore, depositsBefore), _shape(MAX_RATE, u), "fresh again");
+        skip(1 days);
+        interestBefore = market.totalInterest();
+        market.accrue();
+        assertEq(market.totalInterest() - interestBefore, loansBefore * (_shape(MAX_RATE, u) * 1 days) / WAD);
     }
 }

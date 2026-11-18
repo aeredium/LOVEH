@@ -54,13 +54,15 @@ contract Loveh2SurfaceTest is SurfaceTest {
             actions[2] = "submitVoid";
             actions[3] = "executeRotate";
         } else if (_eq(contractName, "FollowingRateFormula")) {
-            views = new string[](6);
-            views[0] = "record";
-            views[1] = "ceiling";
-            views[2] = "targetUtilisation";
-            views[3] = "floorFraction";
-            views[4] = "fullMultiple";
-            views[5] = "ratePerSecond";
+            views = new string[](8);
+            views[0] = "STALE_AFTER";
+            views[1] = "record";
+            views[2] = "ceiling";
+            views[3] = "restingCentre";
+            views[4] = "targetUtilisation";
+            views[5] = "floorFraction";
+            views[6] = "fullMultiple";
+            views[7] = "ratePerSecond";
             actions = new string[](0);
         } else {
             revert("unknown contract");

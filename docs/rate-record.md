@@ -145,7 +145,9 @@ sums divided by the window's length.
 
 Because a stated rate counts forward, a stretch of silence counts at the last stated rates, not at the
 rates the next reading brings. And because the centre is a stored value, it never depends on the clock:
-with no new reading for any length of time, the centre stays what it is.
+with no new reading for any length of time, the centre stays what it is. What a market is charged
+during such a silence is bounded by the following formula, not by the record: see "A stale record"
+under "The following formula" below.
 
 ### A worked example
 
@@ -245,10 +247,38 @@ before the block, `c` is the record's `centre()` as it stands. The rate is linea
 the mean centre is exactly the mean of the rates the parts of the span would have been charged on their
 own.
 
+### A stale record
+
+The record's centre is a stored figure: readings move it and silence leaves it as it is. Left alone,
+a record whose readings had stopped, through a lost signer or a signer's silence, would have every
+market charged its last centre for ever, a spike as much as a lull. The formula bounds that. It reads
+the record's `lastAsOf`, the `asOf` of the last accepted reading, and once the block is more than
+`STALE_AFTER` (7 days) past it, the centre charged is the resting centre, `restingCentre`: the record's
+`initialCentre`, read once at creation and lowered to the ceiling if ever above it. At exactly seven
+days the record's centre is still charged; a second later, the resting centre. The record itself is
+not touched: `centre()` still answers the stored figure, and a reading accepted again makes the record
+fresh from the block of its delivery, so the record's centre is charged once more from then on.
+
+Over a span that crosses the moment the record went stale, a market is charged the record's mean
+centre over the time before that moment and the resting centre over the time after it, each weighted
+by its length, so the time already priced at the record's centre is not re-priced. Before any reading
+`lastAsOf` is zero, so the record counts as stale and the resting centre is charged; that is the
+initial centre, the very figure the record answers before its second reading, so the two agree.
+
+Seven days is long enough for a lost signer to be replaced by a handover (72 hours) and for the new
+signer's readings to begin, and short enough that no dead reading is charged for more than a week.
+
+One limit: the formula knows only the last reading's `asOf`, so once readings have resumed it cannot
+see a silence that has ended. A market untouched across such a silence is charged the record's mean
+centre over its whole span, the silence included. What fixes the resting centre over a silence is a
+touch of the market during it, and anyone may give one: `accrue()` on any market is open to all.
+
 | Figure              | Rule                                                       | Kind                                                   |
 | ------------------- | ---------------------------------------------------------- | ------------------------------------------------------ |
 | `record`            | a rate record, not zero                                    | Set at creation; `ZeroRecord()`                        |
 | `ceiling`           | the record's `maxRate`, read once                          | Set at creation; `BadConfig()` if zero or too wide     |
+| `restingCentre`     | the record's `initialCentre`, read once, lowered to the ceiling if above it | Set at creation; `BadConfig()` if zero |
+| `STALE_AFTER`       | 7 days; past it, by the last reading's `asOf`, the resting centre is charged | Constant                            |
 | `targetUtilisation` | strictly between 0 and 1e18                                | Set at creation; `InvalidTarget()`                     |
 | `floorFraction`     | below 1e18 (zero allowed: no rate at zero utilisation)     | Set at creation; `InvalidFloorFraction()`              |
 | `fullMultiple`      | above zero; steeper above than below; `ceiling × fullMultiple × 1e18` must fit in 256 bits | Set at creation; `ZeroMultiple()`, `SlopeAboveNotSteeper()`, `BadConfig()` |

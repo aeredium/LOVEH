@@ -42,8 +42,11 @@ contract MarketInvariantsFollowingTest is MarketInvariantsBase {
     }
 
     /// @dev The formula answers for every utilisation, whatever the record's state, and keeps its shape.
+    ///      The level is the record's centre while the record is fresh, and the resting centre once
+    ///      the market handler's warps have left the last reading more than STALE_AFTER behind.
     function invariant_ratePerSecondNeverRevertsAndKeepsItsShape() public view {
-        uint256 c = record.centre();
+        bool stale = block.timestamp > uint256(record.lastAsOf()) + following.STALE_AFTER();
+        uint256 c = stale ? following.restingCentre() : record.centre();
         assertEq(following.ratePerSecond(80, 100), c, "at the target the rate is the centre");
         assertEq(following.ratePerSecond(0, 100), c * FLOOR / WAD);
         assertEq(following.ratePerSecond(100, 100), c * (WAD + FULL) / WAD);
