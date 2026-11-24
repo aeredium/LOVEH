@@ -193,15 +193,19 @@ contract Market is IMarket, ReentrancyGuard {
         if (amount == 0) revert ZeroAmount();
         _accrue();
 
-        (bool priceAvailable, uint256 price) = _price();
-        if (!priceAvailable) revert PriceUnavailable();
         uint256 held = collateralOf[msg.sender];
         if (amount > held) revert InsufficientCollateral();
 
         held -= amount;
         collateralOf[msg.sender] = held;
         collateral -= amount;
-        if (_loanOf(msg.sender, _loans, totalLoanUnits) > _maxLoan(held, price)) revert AboveBorrowingLimit();
+        // A borrower who owes nothing has no loan to hold within a limit, so the price is not read:
+        // a price source that is down, or dead, never locks collateral that secures no loan.
+        if (loanUnitsOf[msg.sender] != 0) {
+            (bool priceAvailable, uint256 price) = _price();
+            if (!priceAvailable) revert PriceUnavailable();
+            if (_loanOf(msg.sender, _loans, totalLoanUnits) > _maxLoan(held, price)) revert AboveBorrowingLimit();
+        }
         emit CollateralWithdrawn(msg.sender, receiver, amount);
 
         IERC20(collateralToken).safeTransfer(receiver, amount);

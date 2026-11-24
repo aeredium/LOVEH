@@ -70,8 +70,9 @@ interface IMarket {
 
     /// @notice Lock collateral for `onBehalf`. Credits only the amount actually received.
     function depositCollateral(uint256 amount, address onBehalf) external;
-    /// @notice Withdraw the caller's collateral to `receiver`. Refused when the price is zero or
-    ///         unavailable, or when it would leave the caller's loan above the borrowing limit.
+    /// @notice Withdraw the caller's collateral to `receiver`. A caller who owes nothing withdraws
+    ///         whatever the price source answers. A caller with a loan is refused when the price is
+    ///         zero or unavailable, or when it would leave the loan above the borrowing limit.
     function withdrawCollateral(uint256 amount, address receiver) external;
 
     // ------------------------------------------------------------------ borrowing

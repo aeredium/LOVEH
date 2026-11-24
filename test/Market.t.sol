@@ -233,8 +233,41 @@ contract MarketTest is BaseTest {
         assertEq(market.collateralOf(borrower), 0.6e18);
     }
 
-    function test_withdrawCollateral_refusedWhenPriceZeroOrFailing_evenWithNoLoan() public {
+    /// @dev Fault D: a borrower who owes nothing has no loan to compare with a limit, so no price is
+    ///      needed and none is read.
+    function test_D_withdrawCollateral_withoutALoan_needsNoPrice() public {
         _depositCollateral(market, borrower, 1e18);
+        price.setPrice(0);
+        vm.prank(borrower);
+        market.withdrawCollateral(0.25e18, borrower);
+        price.setPrice(PRICE);
+        price.setReverting(true);
+        vm.prank(borrower);
+        market.withdrawCollateral(0.25e18, borrower);
+        price.setReverting(false);
+        price.setMalformed(true);
+        vm.prank(borrower);
+        market.withdrawCollateral(0.5e18, borrower);
+        assertEq(market.collateralOf(borrower), 0);
+        assertEq(market.collateral(), 0);
+        assertEq(coll.balanceOf(borrower), 1e18);
+    }
+
+    function test_D_withdrawCollateral_afterFullRepayment_needsNoPrice() public {
+        _deposit(market, lender, 1000e18);
+        _openPosition(borrower, 1e18, 500e18);
+        skip(30 days);
+        _repay(market, borrower, market.loanOf(borrower), borrower);
+        assertEq(market.loanUnitsOf(borrower), 0);
+        price.setReverting(true);
+        vm.prank(borrower);
+        market.withdrawCollateral(1e18, borrower);
+        assertEq(coll.balanceOf(borrower), 1e18);
+    }
+
+    function test_D_withdrawCollateral_withALoan_refusedWhenPriceZeroOrFailing() public {
+        _deposit(market, lender, 1000e18);
+        _openPosition(borrower, 1e18, 1); // the smallest loan there is still needs a price
         price.setPrice(0);
         vm.prank(borrower);
         vm.expectRevert(IMarket.PriceUnavailable.selector);
@@ -252,6 +285,17 @@ contract MarketTest is BaseTest {
         price.setMalformed(false);
         vm.prank(borrower);
         market.withdrawCollateral(1, borrower);
+    }
+
+    function test_D_withdrawCollateral_moreThanHeld_refusedWithOrWithoutAPrice() public {
+        _depositCollateral(market, borrower, 1e18);
+        vm.prank(borrower);
+        vm.expectRevert(IMarket.InsufficientCollateral.selector);
+        market.withdrawCollateral(1e18 + 1, borrower);
+        price.setReverting(true);
+        vm.prank(borrower);
+        vm.expectRevert(IMarket.InsufficientCollateral.selector);
+        market.withdrawCollateral(1e18 + 1, borrower);
     }
 
     function test_priceSourceWithoutCodeIsUnavailable() public {
