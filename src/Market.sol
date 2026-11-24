@@ -73,6 +73,10 @@ contract Market is IMarket, ReentrancyGuard {
     uint256 internal _unlent;
     uint256 internal _feeOwed;
     uint256 internal _totalInterest;
+    /// @dev The part of the interest accrued so far that is below one unit of loan token, scaled by
+    ///      1e18 and always below 1e18. It is carried into the next accrual, so that accruing often
+    ///      charges no less than accruing seldom.
+    uint256 internal _interestRemainder;
     uint256 public feePaid;
     uint256 public feeWrittenOff;
     uint256 public totalLoss;
@@ -304,13 +308,13 @@ contract Market is IMarket, ReentrancyGuard {
 
     /// @inheritdoc IMarket
     function deposits() external view returns (uint256) {
-        (uint256 interest, uint256 fee) = _pendingAccrual();
+        (uint256 interest, uint256 fee,) = _pendingAccrual();
         return _deposits + interest - fee;
     }
 
     /// @inheritdoc IMarket
     function loans() external view returns (uint256) {
-        (uint256 interest,) = _pendingAccrual();
+        (uint256 interest,,) = _pendingAccrual();
         return _loans + interest;
     }
 
@@ -328,13 +332,13 @@ contract Market is IMarket, ReentrancyGuard {
 
     /// @inheritdoc IMarket
     function feeOwed() external view returns (uint256) {
-        (, uint256 fee) = _pendingAccrual();
+        (, uint256 fee,) = _pendingAccrual();
         return _feeOwed + fee;
     }
 
     /// @inheritdoc IMarket
     function totalInterest() external view returns (uint256) {
-        (uint256 interest,) = _pendingAccrual();
+        (uint256 interest,,) = _pendingAccrual();
         return _totalInterest + interest;
     }
 
@@ -350,7 +354,7 @@ contract Market is IMarket, ReentrancyGuard {
 
     /// @inheritdoc IMarket
     function loanOf(address borrower) public view returns (uint256) {
-        (uint256 interest,) = _pendingAccrual();
+        (uint256 interest,,) = _pendingAccrual();
         return _loanOf(borrower, _loans + interest, totalLoanUnits);
     }
 
@@ -366,7 +370,7 @@ contract Market is IMarket, ReentrancyGuard {
         uint256 price;
         (priceAvailable, price) = _price();
         if (!priceAvailable) return (false, 0);
-        (uint256 interest,) = _pendingAccrual();
+        (uint256 interest,,) = _pendingAccrual();
         uint256 totalLoans = _loans + interest;
         uint256 totalUnits = totalLoanUnits;
         uint256 units = loanUnitsOf[borrower];
@@ -407,13 +411,13 @@ contract Market is IMarket, ReentrancyGuard {
 
     /// @inheritdoc IMarket
     function receiptsFor(uint256 amount) external view returns (uint256) {
-        (uint256 interest, uint256 fee) = _pendingAccrual();
+        (uint256 interest, uint256 fee,) = _pendingAccrual();
         return _toReceiptsDown(amount, _deposits + interest - fee, _totalReceipts());
     }
 
     /// @inheritdoc IMarket
     function valueOf(uint256 receiptAmount) public view returns (uint256) {
-        (uint256 interest, uint256 fee) = _pendingAccrual();
+        (uint256 interest, uint256 fee,) = _pendingAccrual();
         return _toDepositsDown(receiptAmount, _deposits + interest - fee, _totalReceipts());
     }
 
@@ -439,7 +443,7 @@ contract Market is IMarket, ReentrancyGuard {
         if (!priceAvailable || start >= end) {
             return (priceAvailable, new address[](0), new uint256[](0), new uint256[](0));
         }
-        (uint256 interest,) = _pendingAccrual();
+        (uint256 interest,,) = _pendingAccrual();
         uint256 totalLoans = _loans + interest;
 
         uint256 found = 0;
@@ -462,23 +466,28 @@ contract Market is IMarket, ReentrancyGuard {
 
     // ------------------------------------------------------------------ internals: accrual
 
-    /// @dev Interest and fee accrued since `lastAccrual` but not yet written. The fee is the difference
-    ///      between 10 percent of all interest including this accrual and 10 percent of all interest
-    ///      before it, so that the fee paid, owed and written off always sum to exactly 10 percent of
-    ///      all interest accrued.
-    function _pendingAccrual() internal view returns (uint256 interest, uint256 fee) {
+    /// @dev Interest and fee accrued since `lastAccrual` but not yet written, and the fraction of a
+    ///      unit of interest left over, which `_accrue` stores for the next accrual. The fee is the
+    ///      difference between 10 percent of all interest including this accrual and 10 percent of all
+    ///      interest before it, so that the fee paid, owed and written off always sum to exactly
+    ///      10 percent of all interest accrued.
+    function _pendingAccrual() internal view returns (uint256 interest, uint256 fee, uint256 remainder) {
+        remainder = _interestRemainder;
         uint256 elapsed = block.timestamp - lastAccrual;
-        if (elapsed == 0 || _loans == 0) return (0, 0);
+        if (elapsed == 0 || _loans == 0) return (0, 0, remainder);
         uint256 rate = IRateFormula(rateFormula).ratePerSecond(_loans, _deposits);
-        interest = _loans.mulDivDown(rate * elapsed, WAD);
-        if (interest == 0) return (0, 0);
+        uint256 scaled = _loans * rate * elapsed + remainder;
+        interest = scaled / WAD;
+        remainder = scaled % WAD;
+        if (interest == 0) return (0, 0, remainder);
         uint256 before = _totalInterest;
         fee = (before + interest).mulDivDown(FEE, WAD) - before.mulDivDown(FEE, WAD);
     }
 
     function _accrue() internal {
-        (uint256 interest, uint256 fee) = _pendingAccrual();
+        (uint256 interest, uint256 fee, uint256 remainder) = _pendingAccrual();
         lastAccrual = block.timestamp;
+        _interestRemainder = remainder;
         if (interest == 0) return;
         _loans += interest;
         _deposits += interest - fee;
