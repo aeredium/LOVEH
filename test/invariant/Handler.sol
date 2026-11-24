@@ -211,11 +211,23 @@ contract Handler is Test {
                 require(market.totalLoss() - lossBefore == depositsBefore, "fee written off before every deposit");
             }
         } catch (bytes memory err) {
-            // An unsound loan is refused only when the repayment is too small to seize anything.
-            require(
-                !liquidatable || bytes4(err) == IMarket.NothingSeized.selector, "liquidation of an unsound loan failed"
-            );
+            if (!liquidatable) return;
+            require(bytes4(err) == IMarket.NothingSeized.selector, "liquidation of an unsound loan failed");
+            _requireNothingToSeize(target, owed, amount);
         }
+    }
+
+    /// @dev An unsound loan is refused only when the repayment would seize no collateral, and never
+    ///      when the collateral is worth less than the loan and the repayment reaches what it covers.
+    function _requireNothingToSeize(address target, uint256 owed, uint256 amount) internal view {
+        uint256 p = price.price();
+        uint256 incentive = market.liquidationIncentive();
+        uint256 heldValue = (market.collateralOf(target) * p + PRICE_SCALE - 1) / PRICE_SCALE;
+        require(
+            heldValue >= owed || amount < (heldValue * WAD + incentive - 1) / incentive,
+            "a repayment at the cap was refused"
+        );
+        require((amount * incentive / WAD) * PRICE_SCALE / p == 0, "a repayment that seizes collateral was refused");
     }
 
     function payFee() external countCall {

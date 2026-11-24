@@ -108,6 +108,34 @@ contract FeeOnTransferTest is BaseTest {
         _identity(m, fot);
     }
 
+    /// @dev The cap is on what the liquidator sends. The market receives less, and a liquidator who
+    ///      pays the whole cap still takes all the collateral, so the remainder is written off.
+    function test_I_underwaterLiquidationAtTheCap_takesAllCollateralAndWritesOff() public {
+        fot.mint(lender, 10_000e18);
+        vm.startPrank(lender);
+        fot.approve(address(m), type(uint256).max);
+        m.deposit(10_000e18, lender);
+        vm.stopPrank();
+        _depositCollateral(m, borrower, 1e18);
+        vm.prank(borrower);
+        m.borrow(1700e18, borrower);
+        // Price halves: collateral worth 1000, loan 1700.
+        price.setPrice(PRICE / 2);
+        uint256 cover = (1000e18 * WAD + m.liquidationIncentive() - 1) / m.liquidationIncentive();
+        fot.mint(liquidator, 1700e18);
+        vm.startPrank(liquidator);
+        fot.approve(address(m), type(uint256).max);
+        (uint256 repaid, uint256 seized) = m.liquidate(borrower, type(uint256).max);
+        vm.stopPrank();
+        assertEq(fot.balanceOf(liquidator), 1700e18 - cover, "the liquidator sent more than the cap");
+        assertEq(repaid, _received(cover));
+        assertEq(seized, 1e18);
+        assertEq(m.collateralOf(borrower), 0);
+        assertEq(m.loanOf(borrower), 0);
+        assertEq(m.totalLoss(), 1700e18 - repaid);
+        _identity(m, fot);
+    }
+
     function _identity(Market mk, MockERC20 token) internal view {
         assertEq(mk.unlent() + mk.loans(), mk.deposits() + mk.feeOwed());
         assertEq(token.balanceOf(address(mk)), mk.unlent());

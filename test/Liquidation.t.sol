@@ -165,6 +165,8 @@ contract LiquidationTest is BaseTest {
             _assertIdentity(market);
         } catch (bytes memory err) {
             assertEq(bytes4(err), IMarket.NothingSeized.selector);
+            uint256 toRepay = repayAmount < owed ? repayAmount : owed;
+            assertEq(_seizedFor(toRepay, p), 0, "a repayment that seizes collateral was refused");
         }
     }
 

@@ -269,18 +269,29 @@ contract Market is IMarket, ReentrancyGuard {
 
         uint256 toRepay = FixedPoint.min(repayAmount, loan);
         // When the collateral is worth less than the loan, nobody pays for more collateral than there
-        // is: the repayment stops at the collateral's value divided by the incentive. Both roundings
-        // are up, so a repayment at that cap seizes all the collateral and the rest is written off.
+        // is: the repayment stops at the collateral's value divided by the incentive, rounded up, and
+        // a liquidator who sends that much takes all the collateral, so the rest is written off. The
+        // seizure is not recomputed from the amount received: a loan token that takes a fee on
+        // transfer would leave collateral behind on every call and the write-off would never run.
+        bool takesAll;
         uint256 heldValue = held.mulDivUp(price, PRICE_SCALE);
         if (heldValue < loan) {
-            toRepay = FixedPoint.min(toRepay, heldValue.mulDivUp(WAD, liquidationIncentive));
+            uint256 cover = heldValue.mulDivUp(WAD, liquidationIncentive);
+            if (toRepay >= cover) {
+                toRepay = cover;
+                takesAll = true;
+            }
         }
 
         repaid = _pull(loanToken, toRepay);
-        // Collateral worth repaid * incentive at the price source, rounded down, never more than held.
-        collateralSeized = repaid.mulDivDown(liquidationIncentive, WAD).mulDivDown(PRICE_SCALE, price);
-        if (collateralSeized == 0) revert NothingSeized();
-        if (collateralSeized > held) collateralSeized = held;
+        if (takesAll) {
+            collateralSeized = held;
+        } else {
+            // Collateral worth repaid * incentive at the price source, rounded down, never more than held.
+            collateralSeized = repaid.mulDivDown(liquidationIncentive, WAD).mulDivDown(PRICE_SCALE, price);
+            if (collateralSeized == 0) revert NothingSeized();
+            if (collateralSeized > held) collateralSeized = held;
+        }
 
         _settleRepayment(borrower, repaid, loan);
         held -= collateralSeized;

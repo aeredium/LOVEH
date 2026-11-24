@@ -88,9 +88,9 @@ interface IMarket {
     /// @notice Repay up to the whole loan of a borrower whose loan exceeds the borrowing limit and
     ///         receive collateral worth `repaid * liquidationIncentive` at the price source. When the
     ///         collateral is worth less than the loan, the repayment taken stops at what the collateral
-    ///         covers at the incentive, whatever `repayAmount` says: the liquidator never pays for
-    ///         collateral that is not there. A repayment too small to seize one unit of collateral is
-    ///         refused. If the collateral runs out with loan remaining, the remainder is written off
+    ///         covers at the incentive, whatever `repayAmount` says, and a liquidator who pays that
+    ///         much takes all the collateral: the liquidator never pays for collateral that is not
+    ///         there. A repayment that would seize no collateral is refused. If the collateral runs out with loan remaining, the remainder is written off
     ///         against this market's lenders.
     function liquidate(address borrower, uint256 repayAmount)
         external

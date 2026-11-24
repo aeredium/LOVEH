@@ -108,7 +108,7 @@ if (priceAvailable && borrowers.length != 0) {
     // stops at what the collateral covers at the incentive, so repaid may be less than loans[0] and
     // the liquidator never pays for collateral that is not there. If the collateral runs out with
     // loan remaining, the remainder is written off against this market's lenders (event
-    // LossWrittenOff). A repayment too small to seize one unit of collateral reverts NothingSeized.
+    // LossWrittenOff). A repayment that would seize no collateral reverts NothingSeized.
 }
 ```
 
