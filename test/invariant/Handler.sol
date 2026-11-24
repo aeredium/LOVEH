@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
+import {IMarket} from "../../interfaces/IMarket.sol";
 import {Market} from "../../src/Market.sol";
 import {ReceiptToken} from "../../src/ReceiptToken.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
@@ -209,8 +210,11 @@ contract Handler is Test {
                 require(market.deposits() == 0, "fee written off while deposits remain");
                 require(market.totalLoss() - lossBefore == depositsBefore, "fee written off before every deposit");
             }
-        } catch {
-            require(!liquidatable, "liquidation of an unsound loan failed");
+        } catch (bytes memory err) {
+            // An unsound loan is refused only when the repayment is too small to seize anything.
+            require(
+                !liquidatable || bytes4(err) == IMarket.NothingSeized.selector, "liquidation of an unsound loan failed"
+            );
         }
     }
 
