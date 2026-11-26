@@ -98,11 +98,17 @@ abstract contract MarketInvariantsBase is Test {
     // ------------------------------------------------------------------ 2. borrowing limit
 
     /// @notice No loan above the limit after any borrower action (borrow or collateral withdrawal).
+    ///         Without a price the only borrower action that succeeds is a collateral withdrawal by
+    ///         a borrower who owes nothing.
     function invariant_noLoanAboveLimitAfterBorrowerAction() public view {
         if (!handler.lastWasBorrowerAction()) return;
         address a = handler.lastBorrowerActor();
         (bool ok, uint256 maxLoan) = market.maxLoanOf(a);
-        assertTrue(ok, "a borrower action succeeded without a price");
+        if (!ok) {
+            assertEq(market.loanUnitsOf(a), 0, "a borrower with a loan acted without a price");
+            assertEq(market.loanOf(a), 0, "no loan units and a loan still owed");
+            return;
+        }
         assertLe(market.loanOf(a), maxLoan);
     }
 

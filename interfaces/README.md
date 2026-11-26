@@ -26,7 +26,7 @@ concrete contracts' ABIs include their constructors.
   value grows as interest accrues and falls only when a loss is written off against the market.
 - Every incoming transfer credits the amount actually received. With a token that takes a fee on
   transfer, the receipts, collateral or repayment credited are for the amount that arrived.
-- A price of zero or a failing price source refuses `borrow`, `withdrawCollateral` and `liquidate`.
+- A price of zero or a failing price source refuses `borrow`, `liquidate`, and `withdrawCollateral` by a borrower with a loan. A borrower who owes nothing withdraws collateral whatever the price source answers.
 
 ## Examples
 
