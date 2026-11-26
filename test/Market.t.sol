@@ -8,6 +8,7 @@ import {IMarket} from "../interfaces/IMarket.sol";
 import {IReceiptToken} from "../interfaces/IReceiptToken.sol";
 import {Market} from "../src/Market.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
+import {MockPriceSource} from "./mocks/MockPriceSource.sol";
 
 contract MarketTest is BaseTest {
     // ------------------------------------------------------------------ terms
@@ -381,6 +382,75 @@ contract MarketTest is BaseTest {
         market.accrue();
         assertEq(market.lastAccrual(), block.timestamp);
         _assertIdentity(market);
+    }
+
+    /// @dev A market lending a 6-decimal coin: 500 whole coins lent at full utilisation, 10 percent a
+    ///      year, which is 1.585 base units of interest a second.
+    function _sixDecimalMarket() internal returns (Market m) {
+        MockERC20 six = new MockERC20("Six Decimals", "SIX", 6);
+        MockPriceSource p = new MockPriceSource(2000e24);
+        m = Market(factory.createMarket(address(six), address(coll), address(p), LIMIT, address(linear)));
+        _deposit(m, lender, 500e6);
+        _depositCollateral(m, borrower, 1e18);
+        _borrow(m, borrower, 500e6);
+    }
+
+    /// @dev Fault O: accruing every second must not earn the lenders less than accruing once.
+    function test_O_accruingEverySecondLosesNoInterest() public {
+        Market m = _sixDecimalMarket();
+        uint256 snapshot = vm.snapshotState();
+        skip(1 hours);
+        m.accrue();
+        uint256 once = m.totalInterest();
+        assertEq(once, 5707);
+        vm.revertToState(snapshot);
+        for (uint256 i = 0; i < 1 hours; ++i) {
+            skip(1);
+            m.accrue();
+        }
+        assertGe(m.totalInterest(), once, "interest lost to accruing every second");
+        // Interest written each second earns interest in its turn, but over an hour that is under a unit.
+        assertLe(m.totalInterest(), once + 1);
+        assertEq(m.feePaid() + m.feeOwed(), m.totalInterest() / 10);
+        assertEq(m.unlent() + m.loans(), m.deposits() + m.feeOwed());
+    }
+
+    /// @dev Fault O: a loan small enough to earn less than a base unit a second still pays interest
+    ///      when the market is accrued every second.
+    function test_O_interestBelowOneUnitASecondStillAccrues() public {
+        MockERC20 six = new MockERC20("Six Decimals", "SIX", 6);
+        MockPriceSource p = new MockPriceSource(2000e24);
+        Market m = Market(factory.createMarket(address(six), address(coll), address(p), LIMIT, address(linear)));
+        _deposit(m, lender, 100e6);
+        _depositCollateral(m, borrower, 1e18);
+        _borrow(m, borrower, 100e6); // 0.317 base units of interest a second
+        for (uint256 i = 0; i < 1 hours; ++i) {
+            skip(1);
+            m.accrue();
+        }
+        assertEq(m.totalInterest(), 1141, "an hour of interest on 100 coins at 10 percent a year");
+    }
+
+    function testFuzz_O_anyAccrualScheduleEarnsAtLeastOneAccrual(uint256 seed, uint256 steps) public {
+        Market m = _sixDecimalMarket();
+        steps = bound(steps, 1, 200);
+        uint256 snapshot = vm.snapshotState();
+        uint256 total;
+        uint256[] memory gaps = new uint256[](steps);
+        for (uint256 i = 0; i < steps; ++i) {
+            gaps[i] = uint256(keccak256(abi.encode(seed, i))) % 30 + 1;
+            total += gaps[i];
+        }
+        skip(total);
+        m.accrue();
+        uint256 once = m.totalInterest();
+        vm.revertToState(snapshot);
+        for (uint256 i = 0; i < steps; ++i) {
+            skip(gaps[i]);
+            m.accrue();
+        }
+        assertGe(m.totalInterest(), once);
+        assertEq(m.unlent() + m.loans(), m.deposits() + m.feeOwed());
     }
 
     function test_accrual_noLoansNoInterest() public {
