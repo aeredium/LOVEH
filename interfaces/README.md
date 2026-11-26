@@ -108,7 +108,10 @@ if (priceAvailable && borrowers.length != 0) {
     // stops at what the collateral covers at the incentive, so repaid may be less than loans[0] and
     // the liquidator never pays for collateral that is not there. If the collateral runs out with
     // loan remaining, the remainder is written off against this market's lenders (event
-    // LossWrittenOff). A repayment that would seize no collateral reverts NothingSeized.
+    // LossWrittenOff). At that cap all the collateral is taken whatever the market receives: with
+    // a loan token that takes a fee on transfer, repaid is less than the amount sent and the
+    // difference joins the remainder written off. A repayment that would seize no collateral
+    // reverts NothingSeized.
 }
 ```
 
