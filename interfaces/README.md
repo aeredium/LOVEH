@@ -104,8 +104,14 @@ if (priceAvailable && borrowers.length != 0) {
     IERC20(market.loanToken()).approve(MARKET, loans[0]);
     (uint256 repaid, uint256 collateralSeized) = market.liquidate(borrowers[0], loans[0]);
     // collateralSeized is worth repaid * market.liquidationIncentive() / 1e18 at the price source,
-    // capped at the borrower's collateral. If the collateral runs out with loan remaining, the
-    // remainder is written off against this market's lenders (event LossWrittenOff).
+    // capped at the borrower's collateral. When the collateral is worth less than the loan, repaid
+    // stops at what the collateral covers at the incentive, so repaid may be less than loans[0] and
+    // the liquidator never pays for collateral that is not there. If the collateral runs out with
+    // loan remaining, the remainder is written off against this market's lenders (event
+    // LossWrittenOff). At that cap all the collateral is taken whatever the market receives: with
+    // a loan token that takes a fee on transfer, repaid is less than the amount sent and the
+    // difference joins the remainder written off. A repayment that would seize no collateral
+    // reverts NothingSeized.
 }
 ```
 

@@ -81,6 +81,95 @@ contract LiquidationTest is BaseTest {
         _assertIdentity(market);
     }
 
+    /// @dev The most a liquidator is charged when the collateral is worth less than the loan.
+    function _coverFor(uint256 held, uint256 p) internal view returns (uint256) {
+        uint256 heldValue = (held * p + PRICE_SCALE - 1) / PRICE_SCALE;
+        return (heldValue * WAD + incentive - 1) / incentive;
+    }
+
+    /// @dev Fault I: repaying an underwater loan in full used to take the whole loan for collateral
+    ///      worth less, and write nothing off.
+    function test_I_underwaterLoanRepaidInFull_liquidatorPaysOnlyForTheCollateral() public {
+        _openPosition(borrower, 1e18, 1700e18);
+        uint256 depositsBefore = market.deposits();
+        uint256 p = PRICE / 2; // collateral worth 1000 against a loan of 1700
+        price.setPrice(p);
+        uint256 cover = _coverFor(1e18, p);
+        assertLt(cover, 1000e18);
+        _fund(loan, liquidator, 1700e18, address(market));
+        vm.expectEmit(true, true, true, true);
+        emit IMarket.LossWrittenOff(borrower, 1700e18 - cover, 1700e18 - cover, 0);
+        vm.prank(liquidator);
+        (uint256 repaid, uint256 seized) = market.liquidate(borrower, 1700e18);
+        assertEq(repaid, cover);
+        assertEq(seized, 1e18);
+        assertEq(loan.balanceOf(liquidator), 1700e18 - cover); // the rest never left the liquidator
+        // What the liquidator holds is worth the repayment times the incentive, to rounding.
+        assertApproxEqAbs(seized * p / PRICE_SCALE, repaid * incentive / WAD, 2);
+        assertEq(market.totalLoss(), 1700e18 - cover);
+        assertEq(market.deposits(), depositsBefore - (1700e18 - cover));
+        assertEq(market.loanOf(borrower), 0);
+        assertEq(market.collateralOf(borrower), 0);
+        assertEq(market.borrowerCount(), 0);
+        _assertIdentity(market);
+    }
+
+    /// @dev Fault I: a repayment that buys less than one unit of collateral used to be taken for nothing.
+    function test_I_repaymentThatSeizesNothing_refused() public {
+        _openPosition(borrower, 1e18, 1700e18);
+        price.setPrice(PRICE * 9 / 10);
+        _fund(loan, liquidator, 1, address(market));
+        vm.prank(liquidator);
+        vm.expectRevert(IMarket.NothingSeized.selector);
+        market.liquidate(borrower, 1);
+        assertEq(loan.balanceOf(liquidator), 1);
+    }
+
+    /// @dev Where the collateral is worth at least the loan there is no cap: the whole loan may still
+    ///      be repaid for all the collateral, with nothing written off.
+    function test_I_collateralWorthAtLeastTheLoan_wholeRepaymentStillTaken() public {
+        _openPosition(borrower, 1e18, 1700e18);
+        price.setPrice(1750e36); // worth 1750: covers 1700, but not 1700 times the incentive
+        (uint256 repaid, uint256 seized) = _liquidate(market, liquidator, borrower, 1700e18);
+        assertEq(repaid, 1700e18);
+        assertEq(seized, 1e18);
+        assertEq(market.totalLoss(), 0);
+        assertEq(market.loanOf(borrower), 0);
+        _assertIdentity(market);
+    }
+
+    function testFuzz_I_liquidatorNeverPaysBeyondTheCollateral(uint256 loanAmount, uint256 p, uint256 repayAmount)
+        public
+    {
+        loanAmount = bound(loanAmount, 1e18, 1720e18);
+        _openPosition(borrower, 1e18, loanAmount);
+        p = bound(p, 1e30, PRICE);
+        price.setPrice(p);
+        uint256 owed = market.loanOf(borrower);
+        vm.assume(owed > _maxLoan(1e18, p));
+        repayAmount = bound(repayAmount, 1, owed * 2);
+        _fund(loan, liquidator, repayAmount, address(market));
+        vm.prank(liquidator);
+        try market.liquidate(borrower, repayAmount) returns (uint256 repaid, uint256 seized) {
+            assertGt(seized, 0);
+            uint256 heldValue = (1e18 * p + PRICE_SCALE - 1) / PRICE_SCALE;
+            if (heldValue < owed) {
+                // Underwater: what is seized is worth the repayment times the incentive, to rounding.
+                assertLe(repaid, _coverFor(1e18, p));
+                assertApproxEqAbs(_seizedFor(repaid, p) > 1e18 ? 1e18 : _seizedFor(repaid, p), seized, 0);
+                if (repaid == _coverFor(1e18, p)) {
+                    assertEq(seized, 1e18);
+                    assertEq(market.totalLoss(), owed - repaid);
+                }
+            }
+            _assertIdentity(market);
+        } catch (bytes memory err) {
+            assertEq(bytes4(err), IMarket.NothingSeized.selector);
+            uint256 toRepay = repayAmount < owed ? repayAmount : owed;
+            assertEq(_seizedFor(toRepay, p), 0, "a repayment that seizes collateral was refused");
+        }
+    }
+
     function test_lossWrittenOffWhenCollateralRunsOut() public {
         _openPosition(borrower, 1e18, 1700e18);
         uint256 depositsBefore = market.deposits();
@@ -88,16 +177,18 @@ contract LiquidationTest is BaseTest {
         // Price halves: collateral worth 1000, loan 1700.
         uint256 p = PRICE / 2;
         price.setPrice(p);
-        // The liquidator repays 1000; collateral worth 1043.8 is more than there is, so all 1 unit is seized.
+        // The liquidator offers 1000, which would buy collateral worth 1043.8, more than there is. The
+        // market takes only what the 1 unit covers at the incentive (958.0) and seizes it all.
         uint256 repayAmount = 1000e18;
         assertGt(_seizedFor(repayAmount, p), 1e18);
-        uint256 expectedLoss = 700e18;
+        uint256 cover = _coverFor(1e18, p);
+        uint256 expectedLoss = 1700e18 - cover;
         _fund(loan, liquidator, repayAmount, address(market));
         vm.expectEmit(true, true, true, true);
         emit IMarket.LossWrittenOff(borrower, expectedLoss, expectedLoss, 0);
         vm.prank(liquidator);
         (uint256 repaid, uint256 seized) = market.liquidate(borrower, repayAmount);
-        assertEq(repaid, repayAmount);
+        assertEq(repaid, cover);
         assertEq(seized, 1e18);
         assertEq(market.collateralOf(borrower), 0);
         assertEq(market.loanOf(borrower), 0);
@@ -159,7 +250,7 @@ contract LiquidationTest is BaseTest {
         _openPosition(borrower, 1e18, 1700e18);
         price.setPrice(PRICE / 2);
         _liquidate(market, liquidator, borrower, 1000e18);
-        assertEq(market.totalLoss(), 700e18);
+        assertEq(market.totalLoss(), 1700e18 - _coverFor(1e18, PRICE / 2));
 
         assertEq(other.totalLoss(), 0);
         assertEq(other.deposits(), otherDeposits);
@@ -228,9 +319,21 @@ contract LiquidationTest is BaseTest {
         }
         uint256 collBefore = market.collateral();
         uint256 depositsBefore = market.deposits();
+        // The repayment taken: the amount offered, never above the loan, and never above what the
+        // collateral covers when it is worth less than the loan.
+        uint256 toRepay = repayAmount < owed ? repayAmount : owed;
+        if ((1e18 * p + PRICE_SCALE - 1) / PRICE_SCALE < owed && toRepay > _coverFor(1e18, p)) {
+            toRepay = _coverFor(1e18, p);
+        }
+        if (_seizedFor(toRepay, p) == 0) {
+            vm.prank(liquidator);
+            vm.expectRevert(IMarket.NothingSeized.selector);
+            market.liquidate(borrower, repayAmount);
+            return;
+        }
         vm.prank(liquidator);
         (uint256 repaid, uint256 seized) = market.liquidate(borrower, repayAmount);
-        assertEq(repaid, repayAmount < owed ? repayAmount : owed);
+        assertEq(repaid, toRepay);
         uint256 expected = _seizedFor(repaid, p);
         if (expected >= 1e18) {
             assertEq(seized, 1e18);
