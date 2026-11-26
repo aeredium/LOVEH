@@ -106,6 +106,7 @@ abstract contract MarketInvariantsBase is Test {
         (bool ok, uint256 maxLoan) = market.maxLoanOf(a);
         if (!ok) {
             assertEq(market.loanUnitsOf(a), 0, "a borrower with a loan acted without a price");
+            assertEq(market.loanOf(a), 0, "no loan units and a loan still owed");
             return;
         }
         assertLe(market.loanOf(a), maxLoan);
